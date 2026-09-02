@@ -9,7 +9,6 @@ import {
   Tv,
   Pencil,
   ExternalLink,
-  ArrowLeft,
   RefreshCw,
   Bookmark,
   Users,
@@ -193,6 +192,46 @@ function App() {
 
   // Page Navigation State: null = Page 1 (List Hub & Auth), string = Page 2 (Single List Workspace)
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
+
+  // Helper to open a list workspace with browser history pushState
+  const openWatchlist = (listId: string) => {
+    setSelectedListId(listId);
+    if (window.location.hash !== `#list-${listId}`) {
+      window.history.pushState({ type: 'list', listId }, '', `#list-${listId}`);
+    }
+  };
+
+  // Helper to close a list workspace (navigate back)
+  const closeWatchlist = () => {
+    if (window.location.hash.startsWith('#list-')) {
+      window.history.back();
+    } else {
+      setSelectedListId(null);
+    }
+  };
+
+  // Sync state with browser URL hash & handle popstate (Back/Forward buttons & mobile swipes)
+  useEffect(() => {
+    const syncStateFromLocation = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#list-')) {
+        const listIdFromHash = hash.replace('#list-', '');
+        setSelectedListId(listIdFromHash);
+      } else {
+        setSelectedListId(null);
+      }
+    };
+
+    // Check initial URL hash on mount
+    syncStateFromLocation();
+
+    const handlePopState = () => {
+      syncStateFromLocation();
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Save lists to LocalStorage whenever modified
   useEffect(() => {
@@ -2100,7 +2139,7 @@ function App() {
                       const displayName = profile?.name || (pubkey ? `${pubkey.substring(0, 8)}...${pubkey.substring(pubkey.length - 4)}` : 'Anonymous');
 
                       return (
-                        <div key={list.id} className="list-card" onClick={() => setSelectedListId(list.id)}>
+                        <div key={list.id} className="list-card" onClick={() => openWatchlist(list.id)}>
                           <div className="list-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div
                               className="profile-badge clickable"
@@ -2185,7 +2224,7 @@ function App() {
                   <div
                     key={list.id}
                     className="list-card"
-                    onClick={() => setSelectedListId(list.id)}
+                    onClick={() => openWatchlist(list.id)}
                   >
                     <h3 className="list-card-title" style={{ marginTop: '0.25rem' }}>{renderListTitle(list)}</h3>
                     <p className="list-card-desc">{list.description || 'No description provided.'}</p>
@@ -2291,7 +2330,7 @@ function App() {
                                   <div
                                     key={list.id}
                                     className="list-card"
-                                    onClick={() => setSelectedListId(list.id)}
+                                    onClick={() => openWatchlist(list.id)}
                                   >
                                     <h3 className="list-card-title" style={{ marginTop: '0.25rem' }}>{renderListTitle(list)}</h3>
                                     <p className="list-card-desc">{list.description || 'No description provided.'}</p>
@@ -2331,51 +2370,45 @@ function App() {
       ) : (
         /* PAGE 2: SINGLE LIST FOCUSED WORKSPACE */
         <div className="workspace-container">
-          <div className="workspace-nav-bar">
-            <button className="btn" onClick={() => setSelectedListId(null)}>
-              <ArrowLeft size={16} /> Back to Lists
+          {/* Top User Profile / Log In Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', padding: '0.85rem 1.25rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)' }}>
+            <button
+              className="btn btn-responsive"
+              onClick={() => setIsSettingsModalOpen(true)}
+              title="App Settings"
+            >
+              <Settings size={18} /> <span className="btn-label">Settings</span>
             </button>
+
             {nostrUser ? (
               <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '0.35rem 0.75rem',
-                  borderRadius: 'var(--radius-sm)',
-                  border: '1px solid var(--border-color)',
-                  backgroundColor: 'var(--bg-primary)',
-                  fontSize: '0.85rem'
-                }}
+                className="nostr-user-info clickable"
+                onClick={() => setIsConnectionModalOpen(true)}
+                style={{ margin: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                title="Click to view connection info or disconnect"
               >
+                {isSyncing && <div className="spinner" style={{ width: '14px', height: '14px', border: '2px solid var(--bg-tertiary)', borderTop: '2px solid var(--accent-color)', marginRight: '6px' }}></div>}
                 {nostrUser.picture && (
                   <img
                     src={nostrUser.picture}
                     alt="Avatar"
-                    style={{ width: '20px', height: '20px', borderRadius: '50%', objectFit: 'cover' }}
+                    style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--border-color)', marginRight: '6px' }}
                   />
                 )}
-                <span style={{ fontWeight: 600 }}>
+                <span className="nostr-pubkey" style={{ fontWeight: 700, fontSize: '1.05rem' }} title={nostrUser.pubkey}>
                   {nostrUser.name || `${nostrUser.pubkey.substring(0, 8)}...${nostrUser.pubkey.substring(nostrUser.pubkey.length - 4)}`}
                 </span>
-                <button
-                  className="btn btn-small"
-                  onClick={logoutNostr}
-                  style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', marginLeft: '4px' }}
-                >
-                  Disconnect
-                </button>
               </div>
             ) : (
               <button
-                className="btn btn-primary btn-small"
+                className="btn btn-primary"
                 onClick={() => {
                   setOnboardingStep(0);
                   setIsOnboardingOpen(true);
                 }}
-                style={{ fontWeight: 700, padding: '0.35rem 0.85rem', fontSize: '0.85rem' }}
+                style={{ fontWeight: 700, padding: '0.45rem 1.1rem', fontSize: '0.95rem' }}
               >
-                <LogIn size={15} /> Log in
+                <LogIn size={16} /> Log in
               </button>
             )}
           </div>
@@ -2397,7 +2430,19 @@ function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
-                    <h1 className="workspace-title">{renderListTitle(currentList)}</h1>
+                    <h1 className="workspace-title" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      <span
+                        className="breadcrumb-author"
+                        onClick={closeWatchlist}
+                        title="Click to go back to Lists"
+                      >
+                        {isSocialList
+                          ? (socialProfile?.name || (currentList.id.split(':')[1] ? `${currentList.id.split(':')[1].substring(0, 8)}...` : 'Guest'))
+                          : (nostrUser?.name || (nostrUser?.pubkey ? `${nostrUser.pubkey.substring(0, 8)}...` : 'my'))}
+                      </span>
+                      <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>/</span>
+                      <span>{renderListTitle(currentList)}</span>
+                    </h1>
 
                     {!isSocialList && (!nostrUser || !nostrUser.readOnly) && (
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginLeft: '4px' }}>
@@ -3539,7 +3584,7 @@ function App() {
                           }}
                           onClick={() => {
                             setAuthorProfileModal({ isOpen: false, pubkey: null });
-                            setSelectedListId(list.id);
+                            openWatchlist(list.id);
                           }}
                         >
                           <div>

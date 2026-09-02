@@ -1556,6 +1556,17 @@ textarea.input-field {
   margin: 0;
 }
 
+.breadcrumb-author {
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.breadcrumb-author:hover {
+  color: var(--accent-color);
+  text-decoration: underline;
+}
+
 .workspace-desc {
   font-size: 0.85rem;
   color: var(--text-secondary);
@@ -1612,10 +1623,12 @@ textarea.input-field {
 .workspace-container {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
-  max-width: 800px;
-  margin: 0 auto;
+  gap: 2rem;
   width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  box-sizing: border-box;
 }
 
 .workspace-nav-bar {
