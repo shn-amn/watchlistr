@@ -123,10 +123,6 @@ const cleanListTitle = (title: string): string => {
   return title ? title.replace(/\s*\(Default\)$/i, '').trim() : '';
 };
 
-const isDefaultList = (list: { id: string }): boolean => {
-  return list.id === 'watchlist:default' || list.id === 'watched:default' || list.id.endsWith(':default');
-};
-
 const detectDeviceType = (): 'android' | 'ios' | 'desktop' => {
   if (typeof navigator === 'undefined') return 'desktop';
   const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
@@ -136,15 +132,7 @@ const detectDeviceType = (): 'android' | 'ios' | 'desktop' => {
 };
 
 const renderListTitle = (list: { id: string; title: string }) => {
-  const clean = cleanListTitle(list.title);
-  if (isDefaultList(list)) {
-    return (
-      <>
-        {clean} <span style={{ fontWeight: 400, opacity: 0.8 }}>(Default)</span>
-      </>
-    );
-  }
-  return clean;
+  return cleanListTitle(list.title);
 };
 
 
