@@ -26,7 +26,8 @@ import {
   Download,
   LogIn,
   ChevronDown,
-  ArrowUpDown
+  ArrowUpDown,
+  Eye
 } from 'lucide-react';
 import {
   NostrService,
@@ -133,6 +134,112 @@ const detectDeviceType = (): 'android' | 'ios' | 'desktop' => {
 
 const renderListTitle = (list: { id: string; title: string }) => {
   return cleanListTitle(list.title);
+};
+
+const DECAY_BONUS = 2.1;
+const HALF_LIFE_DAYS = 90;
+
+/**
+ * Calculates the age in days for a watchedDate string, with intelligent midpoint estimation
+ * for incomplete dates (e.g. YYYY or YYYY-MM) relative to the current date.
+ * Returns null if no valid watch date is provided (so no bonus is applied).
+ */
+const parseWatchedDateToDaysAge = (dateStr: string | undefined, now: Date = new Date()): number | null => {
+  if (!dateStr || !dateStr.trim()) return null;
+  const parts = dateStr.trim().split('-').map(p => parseInt(p, 10));
+  if (parts.some(isNaN)) return null;
+
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1; // 1-12
+
+  const year = parts[0];
+  const month = parts[1]; // undefined if only YYYY
+  const day = parts[2];   // undefined if YYYY or YYYY-MM
+
+  if (!month) {
+    // Only Year provided (YYYY)
+    if (year === currentYear) {
+      // In current year: midpoint between Jan 1 and now
+      const startOfYear = new Date(currentYear, 0, 1).getTime();
+      const midTime = (startOfYear + now.getTime()) / 2;
+      const ageMs = now.getTime() - midTime;
+      return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
+    } else if (year > currentYear) {
+      return 0; // Future year, treat as today
+    } else {
+      // Past year: midpoint is mid-year (July 2, noon)
+      const midYear = new Date(year, 6, 2, 12, 0, 0).getTime();
+      const ageMs = now.getTime() - midYear;
+      return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
+    }
+  }
+
+  if (!day) {
+    // Year and Month provided (YYYY-MM)
+    if (year === currentYear && month === currentMonth) {
+      // In current month: midpoint between start of month and now
+      const startOfMonth = new Date(currentYear, currentMonth - 1, 1).getTime();
+      const midTime = (startOfMonth + now.getTime()) / 2;
+      const ageMs = now.getTime() - midTime;
+      return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
+    } else if (year > currentYear || (year === currentYear && month > currentMonth)) {
+      return 0; // Future month, treat as today
+    } else {
+      // Past month: midpoint of that month
+      const daysInMonth = new Date(year, month, 0).getDate();
+      const midMonth = new Date(year, month - 1, Math.round(daysInMonth / 2), 12, 0, 0).getTime();
+      const ageMs = now.getTime() - midMonth;
+      return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
+    }
+  }
+
+  // Full YYYY-MM-DD
+  const targetDate = new Date(year, month - 1, day, 12, 0, 0).getTime();
+  if (isNaN(targetDate)) return null;
+  const ageMs = now.getTime() - targetDate;
+  return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
+};
+
+/**
+ * Calculates decay score: score = rating + bonus * 2 ^ -(age / 90)
+ * Unrated items use rating = 0.
+ * If no watch date is available, bonus is 0.
+ */
+const calculateMediaScore = (item: Media, now: Date = new Date()): number => {
+  const rating = item.userRating !== undefined ? item.userRating : 0;
+  const ageInDays = parseWatchedDateToDaysAge(item.watchedDate, now);
+  if (ageInDays === null) {
+    return rating;
+  }
+  const bonus = DECAY_BONUS * Math.pow(2, -(ageInDays / HALF_LIFE_DAYS));
+  return rating + bonus;
+};
+
+/**
+ * Sorts watched list items by the decaying score formula, with consistent tie-breakers.
+ */
+const sortWatchedItemsByDefaultScore = (items: Media[]): Media[] => {
+  const now = new Date();
+  return [...items].sort((a, b) => {
+    const scoreA = calculateMediaScore(a, now);
+    const scoreB = calculateMediaScore(b, now);
+    if (Math.abs(scoreB - scoreA) > 0.0001) return scoreB - scoreA;
+
+    // Tie-breaker 1: raw user rating
+    const ratingA = a.userRating !== undefined ? a.userRating : 0;
+    const ratingB = b.userRating !== undefined ? b.userRating : 0;
+    if (ratingB !== ratingA) return ratingB - ratingA;
+
+    // Tie-breaker 2: recency of watched date
+    const dateA = a.watchedDate || '';
+    const dateB = b.watchedDate || '';
+    if (dateA && dateB && dateA !== dateB) return dateB.localeCompare(dateA);
+    if (dateA && !dateB) return -1;
+    if (!dateA && dateB) return 1;
+
+    // Tie-breaker 3: title alphabetical
+    return a.title.localeCompare(b.title);
+  });
 };
 
 
@@ -1606,6 +1713,11 @@ function App() {
     return defaultList ? defaultList.items.some(x => x.id === itemId) : false;
   };
 
+  const isInDefaultWatched = (itemId: string): boolean => {
+    const defaultWatched = lists.find(x => x.id === 'watched:default') || lists.find(x => x.type === 'watched');
+    return defaultWatched ? defaultWatched.items.some(x => x.id === itemId) : false;
+  };
+
   const toggleDefaultWatchlist = (item: Media) => {
     const defaultList = lists.find(x => x.id === defaultWatchlistId) || lists.find(x => x.type === 'watchlist');
     const targetId = defaultList ? defaultList.id : defaultWatchlistId;
@@ -1878,7 +1990,7 @@ function App() {
     return years;
   };
 
-  const ListCardPosterStrip: React.FC<{ items: Media[] }> = ({ items }) => {
+  const ListCardPosterStrip: React.FC<{ items?: Media[]; list?: MediaList }> = ({ items: propItems, list }) => {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [maxSlots, setMaxSlots] = useState<number>(5);
 
@@ -1904,6 +2016,9 @@ function App() {
       observer.observe(el);
       return () => observer.disconnect();
     }, []);
+
+    const rawItems = list ? list.items : (propItems || []);
+    const items = list && list.type === 'watched' ? sortWatchedItemsByDefaultScore(rawItems) : rawItems;
 
     if (!items || items.length === 0) {
       return (
@@ -2151,7 +2266,7 @@ function App() {
                           <p className="list-card-desc">{list.description || 'No description provided.'}</p>
 
                           <div className="list-card-footer">
-                            <ListCardPosterStrip items={list.items} />
+                            <ListCardPosterStrip list={list} />
                           </div>
                         </div>
                       );
@@ -2218,7 +2333,7 @@ function App() {
                     <p className="list-card-desc">{list.description || 'No description provided.'}</p>
 
                     <div className="list-card-footer">
-                      <ListCardPosterStrip items={list.items} />
+                      <ListCardPosterStrip list={list} />
                     </div>
                   </div>
                 ))}
@@ -2324,7 +2439,7 @@ function App() {
                                     <p className="list-card-desc">{list.description || 'No description provided.'}</p>
 
                                     <div className="list-card-footer">
-                                      <ListCardPosterStrip items={list.items} />
+                                      <ListCardPosterStrip list={list} />
                                     </div>
                                   </div>
                                 ))}
@@ -2503,7 +2618,9 @@ function App() {
                   });
 
                   // 2. Sort by selected order
-                  if (mediaSortOrder === 'recent') {
+                  if (currentList.type === 'watched' && !mediaSortOrder) {
+                    processedItems = sortWatchedItemsByDefaultScore(processedItems);
+                  } else if (mediaSortOrder === 'recent') {
                     processedItems = [...processedItems].sort((a, b) => {
                       const dateA = a.watchedDate || '';
                       const dateB = b.watchedDate || '';
@@ -2588,7 +2705,7 @@ function App() {
                                       ? 'Highest'
                                       : mediaSortOrder === 'lowest'
                                         ? 'Lowest'
-                                        : 'Sort'}
+                                        : 'Default'}
                               </span>
                               <ChevronDown size={11} className="sort-chevron" />
                             </button>
@@ -2754,117 +2871,149 @@ function App() {
               </div>
             )}
           </div>
+        </div>
+      )}
 
-          {/* Search Modal Popup */}
-          {isSearchDrawerOpen && (
-            <div className="search-drawer-overlay" onClick={() => setIsSearchDrawerOpen(false)}>
-              <div className="search-drawer" onClick={(e) => e.stopPropagation()}>
-                <div className="search-drawer-header">
-                  <h3 className="modal-title" style={{ margin: 0 }}>Find & Add Media</h3>
-                  <button className="btn btn-action-icon" onClick={() => setIsSearchDrawerOpen(false)} title="Close">
-                    <X size={16} />
+      {/* Global Search Modal Popup (Find & Add) */}
+      {isSearchDrawerOpen && (
+        <div className="search-drawer-overlay" onClick={() => setIsSearchDrawerOpen(false)}>
+          <div className="search-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="search-drawer-header">
+              <h3 className="modal-title" style={{ margin: 0 }}>Find & Add Media</h3>
+              <button className="btn btn-action-icon" onClick={() => setIsSearchDrawerOpen(false)} title="Close">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="search-drawer-body">
+              <div className="search-input-box">
+                <Search size={15} className="search-input-icon" />
+                <input
+                  type="text"
+                  className="input-field search-input"
+                  placeholder="Search movies or TV series on TheTVDB..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  autoFocus
+                />
+                {searchQuery && (
+                  <button className="btn btn-action-icon search-clear-btn" onClick={clearSearch} title="Clear search">
+                    <X size={14} />
                   </button>
-                </div>
+                )}
+              </div>
 
-                <div className="search-drawer-body">
-                  <div className="search-input-box">
-                    <Search size={15} className="search-input-icon" />
-                    <input
-                      type="text"
-                      className="input-field search-input"
-                      placeholder="Search movies or TV series on TheTVDB..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      autoFocus
-                    />
-                    {searchQuery && (
-                      <button className="btn btn-action-icon search-clear-btn" onClick={clearSearch} title="Clear search">
-                        <X size={14} />
-                      </button>
-                    )}
+              <div className="search-results-list">
+                {isLoading ? (
+                  <div className="loading-container">
+                    <div className="spinner"></div>
+                    <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Searching TheTVDB...</p>
                   </div>
-
-                  <div className="search-results-list">
-                    {isLoading ? (
-                      <div className="loading-container">
-                        <div className="spinner"></div>
-                        <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Searching TheTVDB...</p>
-                      </div>
-                    ) : error ? (
-                      <div className="error-card" style={{ padding: '1rem', fontSize: '0.85rem' }}>{error}</div>
-                    ) : searchResults.length > 0 ? (
-                      searchResults.map(item => {
-                        const alreadyInList = currentList?.items.some(x => x.id === item.id);
-                        return (
-                          <div key={item.id} className="media-card" style={{ display: 'flex', alignItems: 'center', padding: '0.5rem 0.75rem' }}>
-                            <div className="poster-container" style={{ width: '48px', height: '68px', cursor: 'pointer' }} onClick={() => openDetailsModal(item)}>
-                              {item.poster ? (
-                                <img src={item.poster} alt={item.title} className="poster-img" />
-                              ) : (
-                                <div className="media-placeholder-icon">
-                                  {item.type === 'movie' ? <Film size={16} /> : <Tv size={16} />}
-                                </div>
-                              )}
+                ) : error ? (
+                  <div className="error-card" style={{ padding: '1rem', fontSize: '0.85rem' }}>{error}</div>
+                ) : searchResults.length > 0 ? (
+                  searchResults.map(item => {
+                    const alreadyInList = currentList?.items.some(x => x.id === item.id);
+                    return (
+                      <div key={item.id} className="media-card" style={{ display: 'flex', alignItems: 'center', padding: '0.5rem 0.75rem' }}>
+                        <div className="poster-container" style={{ width: '48px', height: '68px', cursor: 'pointer' }} onClick={() => openDetailsModal(item)}>
+                          {item.poster ? (
+                            <img src={item.poster} alt={item.title} className="poster-img" />
+                          ) : (
+                            <div className="media-placeholder-icon">
+                              {item.type === 'movie' ? <Film size={16} /> : <Tv size={16} />}
                             </div>
+                          )}
+                        </div>
 
-                            <div className="media-info" style={{ flex: 1, minWidth: 0, paddingLeft: '0.75rem', overflow: 'hidden' }}>
-                              <div className="media-header">
-                                <span className="media-title clickable" onClick={() => openDetailsModal(item)} title={item.title}>
-                                  {item.title}
-                                </span>
-                                <span className={`media-type-badge ${item.type}`}>
-                                  {item.type === 'movie' ? <Film size={11} /> : <Tv size={11} />}
-                                  <span>{item.type === 'movie' ? 'Movie' : 'TV'}</span>
-                                </span>
-                              </div>
-                              {renderDirectorCreator(item)}
-                            </div>
-
-                            <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              {renderWatchlistRibbon(item)}
-                              {alreadyInList ? (
-                                <button className="btn btn-success" disabled style={{ padding: '4px 8px', fontSize: '0.8rem' }}>
-                                  <Check size={14} /> Added
-                                </button>
-                              ) : (
-                                <button
-                                  className="btn btn-primary"
-                                  onClick={() => {
-                                    if (currentList) {
-                                      if (currentList.type === 'watchlist') {
-                                        addToWatchlist(item, currentList.id);
-                                      } else {
-                                        openLogWatchedModal(item, 'search', currentList.id);
-                                      }
-                                    }
-                                    setIsSearchDrawerOpen(false);
-                                    clearSearch();
-                                  }}
-                                  style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                                >
-                                  <Plus size={14} /> Add
-                                </button>
-                              )}
-                            </div>
+                        <div className="media-info" style={{ flex: 1, minWidth: 0, paddingLeft: '0.75rem', overflow: 'hidden' }}>
+                          <div className="media-header">
+                            <span className="media-title clickable" onClick={() => openDetailsModal(item)} title={item.title}>
+                              {item.title}
+                            </span>
+                            <span className={`media-type-badge ${item.type}`}>
+                              {item.type === 'movie' ? <Film size={11} /> : <Tv size={11} />}
+                              <span>{item.type === 'movie' ? 'Movie' : 'TV'}</span>
+                            </span>
                           </div>
-                        );
-                      })
-                    ) : searchQuery.trim() ? (
-                      <div className="empty-state" style={{ padding: '2rem 0' }}>
-                        <p className="empty-state-title">No matches found</p>
-                        <p className="empty-state-text">Try searching for a different title on TheTVDB.</p>
+                          {renderDirectorCreator(item)}
+                        </div>
+
+                        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          {renderWatchlistRibbon(item)}
+                          {currentList ? (
+                            alreadyInList ? (
+                              <button className="btn btn-success" disabled style={{ padding: '4px 8px', fontSize: '0.8rem' }}>
+                                <Check size={14} /> Added
+                              </button>
+                            ) : (
+                              <button
+                                className="btn btn-primary"
+                                onClick={() => {
+                                  if (currentList.type === 'watchlist') {
+                                    addToWatchlist(item, currentList.id);
+                                  } else {
+                                    openLogWatchedModal(item, 'search', currentList.id);
+                                  }
+                                  setIsSearchDrawerOpen(false);
+                                  clearSearch();
+                                }}
+                                style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                              >
+                                <Plus size={14} /> Add
+                              </button>
+                            )
+                          ) : (
+                            isInDefaultWatched(item.id) ? (
+                              <button className="btn btn-success" disabled style={{ padding: '4px 8px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <Check size={14} /> Logged
+                              </button>
+                            ) : (
+                              <button
+                                className="btn btn-primary"
+                                onClick={() => {
+                                  openLogWatchedModal(item, 'search');
+                                  setIsSearchDrawerOpen(false);
+                                  clearSearch();
+                                }}
+                                title="Log as watched"
+                                style={{ padding: '4px 8px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              >
+                                <Eye size={14} /> Log as watched
+                              </button>
+                            )
+                          )}
+                        </div>
                       </div>
-                    ) : (
-                      <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '2rem 1rem', fontSize: '0.9rem' }}>
-                        Type a title above to search for movies or series to add to <strong>{currentList ? renderListTitle(currentList) : 'this list'}</strong>.
-                      </div>
-                    )}
+                    );
+                  })
+                ) : searchQuery.trim() ? (
+                  <div className="empty-state" style={{ padding: '2rem 0' }}>
+                    <p className="empty-state-title">No matches found</p>
+                    <p className="empty-state-text">Try searching for a different title on TheTVDB.</p>
                   </div>
-                </div>
+                ) : (
+                  <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '2rem 1rem', fontSize: '0.9rem' }}>
+                    Type a title above to search for movies or series to {currentList ? <>add to <strong>{renderListTitle(currentList)}</strong></> : 'bookmark or log as watched'}.
+                  </div>
+                )}
               </div>
             </div>
-          )}
+          </div>
         </div>
+      )}
+
+      {/* Floating Red Action Button for Find & Add */}
+      {!isSearchDrawerOpen && (
+        <button
+          type="button"
+          className="fab-find-add"
+          onClick={() => setIsSearchDrawerOpen(true)}
+          title="Find & Add Media"
+          aria-label="Find & Add Media"
+        >
+          <Search size={22} color="#ffffff" strokeWidth={2.4} />
+        </button>
       )}
 
       {/* Modal Dialog for logging watched details */}
