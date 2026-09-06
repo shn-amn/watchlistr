@@ -19,3 +19,21 @@ watchlistr.example.com {
         file_server
     }
 }
+
+# Reference block for Nightly release served on a subpath (e.g. nightly.another.one/watch):
+# nightly.exampl.com/watchlistr {
+#     encode zstd gzip
+#
+#     # Reverse proxy TVDB API requests for the /watch subpath
+#     handle /watchlistr/api/* {
+#         uri strip_prefix /watchlistr
+#         reverse_proxy ttvdb-proxy-nightly:3000
+#     }
+#
+#     # Serve static nightly frontend dist under /watch
+#     handle_path /watchlistr/* {
+#         root * /srv/watchlistr-nightly
+#         try_files {path} /index.html
+#         file_server
+#     }
+# }

@@ -136,6 +136,12 @@ const renderListTitle = (list: { id: string; title: string }) => {
   return cleanListTitle(list.title);
 };
 
+const getApiUrl = (endpoint: string): string => {
+  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  return `${base}${cleanEndpoint}`;
+};
+
 const DECAY_BONUS = 2.1;
 const HALF_LIFE_DAYS = 90;
 
@@ -607,7 +613,7 @@ function App() {
 
     const delayDebounce = setTimeout(async () => {
       try {
-        const response = await fetch(`/api/tvdb/search?query=${encodeURIComponent(searchQuery)}`);
+        const response = await fetch(getApiUrl(`/api/tvdb/search?query=${encodeURIComponent(searchQuery)}`));
         if (!response.ok) {
           throw new Error(`Search request failed with status ${response.status}`);
         }
@@ -1495,12 +1501,12 @@ function App() {
 
   const fetchTVShowrunner = async (seriesId: string): Promise<string | undefined> => {
     try {
-      const epRes = await fetch(`/api/tvdb/series/${seriesId}/episodes/default?page=0`);
+      const epRes = await fetch(getApiUrl(`/api/tvdb/series/${seriesId}/episodes/default?page=0`));
       if (epRes.ok) {
         const epJson = await epRes.json();
         const ep1 = epJson.data?.episodes?.find((e: any) => e.seasonNumber === 1 && e.number === 1) || epJson.data?.episodes?.[0];
         if (ep1?.id) {
-          const epExtRes = await fetch(`/api/tvdb/episodes/${ep1.id}/extended`);
+          const epExtRes = await fetch(getApiUrl(`/api/tvdb/episodes/${ep1.id}/extended`));
           if (epExtRes.ok) {
             const epExtJson = await epExtRes.json();
             const writers = epExtJson.data?.characters
@@ -1524,15 +1530,15 @@ function App() {
     const resolved = await Promise.all(unresolved.map(async (item) => {
       const numericId = item.id.includes('-') ? item.id.split('-')[1] : item.id;
       const endpoint = item.type === 'tv'
-        ? `/api/tvdb/series/${numericId}/extended`
-        : `/api/tvdb/movies/${numericId}/extended`;
+        ? getApiUrl(`/api/tvdb/series/${numericId}/extended`)
+        : getApiUrl(`/api/tvdb/movies/${numericId}/extended`);
 
       try {
         let res = await fetch(endpoint);
         if (!res.ok && endpoint.endsWith('/extended')) {
           const stdEndpoint = item.type === 'tv'
-            ? `/api/tvdb/series/${numericId}`
-            : `/api/tvdb/movies/${numericId}`;
+            ? getApiUrl(`/api/tvdb/series/${numericId}`)
+            : getApiUrl(`/api/tvdb/movies/${numericId}`);
           res = await fetch(stdEndpoint);
         }
         if (!res.ok) throw new Error();
@@ -1909,8 +1915,8 @@ function App() {
 
     const numericId = item.id.includes('-') ? item.id.split('-')[1] : item.id;
     const endpoint = item.type === 'tv'
-      ? `/api/tvdb/series/${numericId}/extended`
-      : `/api/tvdb/movies/${numericId}/extended`;
+      ? getApiUrl(`/api/tvdb/series/${numericId}/extended`)
+      : getApiUrl(`/api/tvdb/movies/${numericId}/extended`);
 
     try {
       const response = await fetch(endpoint);

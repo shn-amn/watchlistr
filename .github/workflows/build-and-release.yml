@@ -2,9 +2,9 @@ name: Build & Release
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "next" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "next" ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,7 +34,12 @@ jobs:
         run: npm run lint
 
       - name: Build frontend
-        run: npm run build
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/next" ]; then
+            npm run build -- --base=/watch/
+          else
+            npm run build
+          fi
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4
@@ -47,7 +52,7 @@ jobs:
     name: Frontend release
     needs: check-and-build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
     permissions:
       contents: write
 
@@ -63,20 +68,38 @@ jobs:
           cd dist
           zip -r ../watchlistr-dist.zip .
 
-      - name: Publish/Update Latest Release
+      - name: Set Release Parameters
+        id: params
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "tag_name=latest" >> $GITHUB_OUTPUT
+            echo "release_name=Latest Build" >> $GITHUB_OUTPUT
+            echo "release_body=Automated frontend static bundle built from the main branch." >> $GITHUB_OUTPUT
+            echo "make_latest=true" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          else
+            echo "tag_name=nightly" >> $GITHUB_OUTPUT
+            echo "release_name=Nightly Build" >> $GITHUB_OUTPUT
+            echo "release_body=Automated frontend static bundle built from the next branch." >> $GITHUB_OUTPUT
+            echo "make_latest=false" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish/Update Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: "Latest Build"
-          body: "Automated frontend static bundle built from the main branch."
-          make_latest: "true"
+          tag_name: ${{ steps.params.outputs.tag_name }}
+          name: ${{ steps.params.outputs.release_name }}
+          body: ${{ steps.params.outputs.release_body }}
+          make_latest: ${{ steps.params.outputs.make_latest }}
+          prerelease: ${{ steps.params.outputs.prerelease == 'true' }}
           files: watchlistr-dist.zip
 
   docker:
     name: Proxy image build and publish
     needs: check-and-build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
     permissions:
       contents: read
       packages: write
@@ -107,8 +130,8 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
-            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=nightly,enable=${{ github.ref == 'refs/heads/next' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
