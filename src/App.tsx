@@ -1,33 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Search,
-  X,
   Plus,
   Check,
   Trash2,
   Film,
   Tv,
   Pencil,
-  ExternalLink,
   RefreshCw,
   Bookmark,
   Users,
   User,
   UserPlus,
   UserMinus,
-  UserX,
   Globe,
-  Smartphone,
-  Copy,
-  Settings,
-  LogOut,
-  Upload,
-  Sparkles,
-  Download,
-  LogIn,
   ChevronDown,
-  ArrowUpDown,
-  Eye
+  ArrowUpDown
 } from 'lucide-react';
 import {
   NostrService,
@@ -47,206 +34,50 @@ declare global {
   }
 }
 
-// TypeScript interfaces
-interface Media {
-  id: string;
-  title: string;
-  year: string;
-  type: 'movie' | 'tv';
-  poster: string;
-  genres: string[];
-  watchedDate?: string;
-  userRating?: number;
-  slug?: string;
-  director?: string;
-  creator?: string;
-  overview?: string;
-}
+import type {
+  Media,
+  MediaList,
+  NostrUser,
+  MediaTypeFilter,
+  MediaSortOrder,
+  LogModalState,
+  DetailsModalState,
+  NewListModalState,
+  EditListModalState,
+  DeleteListModalState,
+  AuthorProfileModalState
+} from './types';
+import {
+  DEFAULT_RELAYS
+} from './constants';
+import {
+  getApiUrl,
+  getMonthName,
+  cleanListTitle,
+  renderListTitle,
+  getRatingEmoji,
+  renderDirectorCreator,
+  sortWatchedItemsByDefaultScore
+} from './utils';
+import {
+  DeleteListModal,
+  EditListModal,
+  NewListModal,
+  FollowModal,
+  SettingsModal,
+  DetailsModal,
+  LogWatchedModal,
+  AuthorProfileModal,
+  ConnectionModal,
+  OnboardingModal,
+  SearchModal
+} from './components/modals';
+import {
+  FloatingAddButton,
+  HeaderBar,
+  ListCardPosterStrip
+} from './components/common';
 
-interface MediaList {
-  id: string;
-  title: string;
-  description: string;
-  type: 'watchlist' | 'watched';
-  items: Media[];
-  createdAt: number;
-}
-
-interface NostrUser {
-  pubkey: string;
-  npub?: string;
-  name?: string;
-  picture?: string;
-  readOnly?: boolean;
-  signerType: 'extension' | 'bunker' | 'readonly';
-  bunkerUrl?: string;
-  bunkerClientSk?: string;
-}
-
-// 1-10 Rating Scale Emojis & Labels
-const RATING_EMOJIS: Record<number, { emoji: string; label: string }> = {
-  1: { emoji: '🤮', label: 'Vomiting' },
-  2: { emoji: '🤢', label: 'Nauseous' },
-  3: { emoji: '🥱', label: 'Boring' },
-  4: { emoji: '🙄', label: 'Meh' },
-  5: { emoji: '🙂', label: 'Slight Smile' },
-  6: { emoji: '😊', label: 'Warm Smile' },
-  7: { emoji: '😃', label: 'Good' },
-  8: { emoji: '😍', label: 'Heart Eyes' },
-  9: { emoji: '🤩', label: 'Star-struck' },
-  10: { emoji: '🤯', label: 'Mind Blown' },
-};
-
-const getRatingEmoji = (rating: number | undefined): string => {
-  if (rating === undefined || isNaN(rating)) return '⭐';
-  const rounded = Math.min(Math.max(Math.round(rating), 1), 10);
-  return RATING_EMOJIS[rounded]?.emoji || '⭐';
-};
-
-// Render director or creator info cleanly below title, with production year
-const renderDirectorCreator = (item: Media) => {
-  const creatorOrDirector = item.type === 'movie' ? item.director : item.creator;
-  const year = item.year ? String(item.year).trim() : null;
-
-  if (creatorOrDirector && year) {
-    return <div className="media-creator-director">{creatorOrDirector}, {year}</div>;
-  }
-  if (creatorOrDirector) {
-    return <div className="media-creator-director">{creatorOrDirector}</div>;
-  }
-  if (year) {
-    return <div className="media-creator-director">{year}</div>;
-  }
-  return null;
-};
-
-const cleanListTitle = (title: string): string => {
-  return title ? title.replace(/\s*\(Default\)$/i, '').trim() : '';
-};
-
-const detectDeviceType = (): 'android' | 'ios' | 'desktop' => {
-  if (typeof navigator === 'undefined') return 'desktop';
-  const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
-  if (/android/i.test(ua)) return 'android';
-  if (/iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream) return 'ios';
-  return 'desktop';
-};
-
-const renderListTitle = (list: { id: string; title: string }) => {
-  return cleanListTitle(list.title);
-};
-
-const getApiUrl = (endpoint: string): string => {
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  return `${base}${cleanEndpoint}`;
-};
-
-const DECAY_BONUS = 2.1;
-const HALF_LIFE_DAYS = 90;
-
-/**
- * Calculates the age in days for a watchedDate string, with intelligent midpoint estimation
- * for incomplete dates (e.g. YYYY or YYYY-MM) relative to the current date.
- * Returns null if no valid watch date is provided (so no bonus is applied).
- */
-const parseWatchedDateToDaysAge = (dateStr: string | undefined, now: Date = new Date()): number | null => {
-  if (!dateStr || !dateStr.trim()) return null;
-  const parts = dateStr.trim().split('-').map(p => parseInt(p, 10));
-  if (parts.some(isNaN)) return null;
-
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1; // 1-12
-
-  const year = parts[0];
-  const month = parts[1]; // undefined if only YYYY
-  const day = parts[2];   // undefined if YYYY or YYYY-MM
-
-  if (!month) {
-    // Only Year provided (YYYY)
-    if (year === currentYear) {
-      // In current year: midpoint between Jan 1 and now
-      const startOfYear = new Date(currentYear, 0, 1).getTime();
-      const midTime = (startOfYear + now.getTime()) / 2;
-      const ageMs = now.getTime() - midTime;
-      return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
-    } else if (year > currentYear) {
-      return 0; // Future year, treat as today
-    } else {
-      // Past year: midpoint is mid-year (July 2, noon)
-      const midYear = new Date(year, 6, 2, 12, 0, 0).getTime();
-      const ageMs = now.getTime() - midYear;
-      return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
-    }
-  }
-
-  if (!day) {
-    // Year and Month provided (YYYY-MM)
-    if (year === currentYear && month === currentMonth) {
-      // In current month: midpoint between start of month and now
-      const startOfMonth = new Date(currentYear, currentMonth - 1, 1).getTime();
-      const midTime = (startOfMonth + now.getTime()) / 2;
-      const ageMs = now.getTime() - midTime;
-      return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
-    } else if (year > currentYear || (year === currentYear && month > currentMonth)) {
-      return 0; // Future month, treat as today
-    } else {
-      // Past month: midpoint of that month
-      const daysInMonth = new Date(year, month, 0).getDate();
-      const midMonth = new Date(year, month - 1, Math.round(daysInMonth / 2), 12, 0, 0).getTime();
-      const ageMs = now.getTime() - midMonth;
-      return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
-    }
-  }
-
-  // Full YYYY-MM-DD
-  const targetDate = new Date(year, month - 1, day, 12, 0, 0).getTime();
-  if (isNaN(targetDate)) return null;
-  const ageMs = now.getTime() - targetDate;
-  return Math.max(0, ageMs / (1000 * 60 * 60 * 24));
-};
-
-/**
- * Calculates decay score: score = rating + bonus * 2 ^ -(age / 90)
- * Unrated items use rating = 0.
- * If no watch date is available, bonus is 0.
- */
-const calculateMediaScore = (item: Media, now: Date = new Date()): number => {
-  const rating = item.userRating !== undefined ? item.userRating : 0;
-  const ageInDays = parseWatchedDateToDaysAge(item.watchedDate, now);
-  if (ageInDays === null) {
-    return rating;
-  }
-  const bonus = DECAY_BONUS * Math.pow(2, -(ageInDays / HALF_LIFE_DAYS));
-  return rating + bonus;
-};
-
-/**
- * Sorts watched list items by the decaying score formula, with consistent tie-breakers.
- */
-const sortWatchedItemsByDefaultScore = (items: Media[]): Media[] => {
-  const now = new Date();
-  return [...items].sort((a, b) => {
-    const scoreA = calculateMediaScore(a, now);
-    const scoreB = calculateMediaScore(b, now);
-    if (Math.abs(scoreB - scoreA) > 0.0001) return scoreB - scoreA;
-
-    // Tie-breaker 1: raw user rating
-    const ratingA = a.userRating !== undefined ? a.userRating : 0;
-    const ratingB = b.userRating !== undefined ? b.userRating : 0;
-    if (ratingB !== ratingA) return ratingB - ratingA;
-
-    // Tie-breaker 2: recency of watched date
-    const dateA = a.watchedDate || '';
-    const dateB = b.watchedDate || '';
-    if (dateA && dateB && dateA !== dateB) return dateB.localeCompare(dateA);
-    if (dateA && !dateB) return -1;
-    if (!dateA && dateB) return 1;
-
-    // Tie-breaker 3: title alphabetical
-    return a.title.localeCompare(b.title);
-  });
-};
 
 
 function App() {
@@ -350,21 +181,14 @@ function App() {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [relayStatuses, setRelayStatuses] = useState<Record<string, boolean>>({});
   const nostrServiceRef = useRef<NostrService | null>(null);
-  // Connection state
-  const [DEFAULT_RELAYS] = useState<string[]>([
-    'wss://relay.damus.io',
-    'wss://nos.lol',
-    'wss://relay.nostr.band',
-    'wss://relay.snort.social'
-  ]);
 
   const activeWatched = lists.find(x => x.id === activeWatchedId) || { items: [] };
   const watchedList = activeWatched.items;
 
   // Media type filter for current workspace list ('movie', 'tv', or null for all)
-  const [mediaTypeFilter, setMediaTypeFilter] = useState<'movie' | 'tv' | null>(null);
+  const [mediaTypeFilter, setMediaTypeFilter] = useState<MediaTypeFilter>(null);
   // Media sort order for watched lists ('recent', 'oldest', 'rating', 'lowest', or null for default)
-  const [mediaSortOrder, setMediaSortOrder] = useState<'recent' | 'oldest' | 'rating' | 'lowest' | null>(null);
+  const [mediaSortOrder, setMediaSortOrder] = useState<MediaSortOrder>(null);
   const [isSortModalOpen, setIsSortModalOpen] = useState<boolean>(false);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -448,10 +272,7 @@ function App() {
   const [publishingStep, setPublishingStep] = useState<'uploading' | 'publishing' | null>(null);
   const [profileStatus, setProfileStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isDraggingAvatar, setIsDraggingAvatar] = useState(false);
-  const [authorProfileModal, setAuthorProfileModal] = useState<{
-    isOpen: boolean;
-    pubkey: string | null;
-  }>({ isOpen: false, pubkey: null });
+  const [authorProfileModal, setAuthorProfileModal] = useState<AuthorProfileModalState>({ isOpen: false, pubkey: null });
 
   // Following tab collapse/expand state
   const [expandedFollowingUsers, setExpandedFollowingUsers] = useState<Record<string, boolean>>({});
@@ -472,16 +293,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   // Modal state for logging watched details
-  const [logModal, setLogModal] = useState<{
-    isOpen: boolean;
-    item: Media | null;
-    year: string;
-    month: string;
-    day: string;
-    rating: string;
-    sourceList: 'search' | 'watchlist' | 'edit';
-    targetListId: string;
-  }>({
+  const [logModal, setLogModal] = useState<LogModalState>({
     isOpen: false,
     item: null,
     year: '',
@@ -493,13 +305,7 @@ function App() {
   });
 
   // Modal state for viewing TVDB details
-  const [detailsModal, setDetailsModal] = useState<{
-    isOpen: boolean;
-    item: Media | null;
-    isLoading: boolean;
-    error: string | null;
-    extendedInfo: any | null;
-  }>({
+  const [detailsModal, setDetailsModal] = useState<DetailsModalState>({
     isOpen: false,
     item: null,
     isLoading: false,
@@ -511,30 +317,21 @@ function App() {
   const [isSearchDrawerOpen, setIsSearchDrawerOpen] = useState(false);
 
   // Modal state for creating new custom list
-  const [newListModal, setNewListModal] = useState<{
-    isOpen: boolean;
-    type: 'watchlist' | 'watched';
-  }>({
+  const [newListModal, setNewListModal] = useState<NewListModalState>({
     isOpen: false,
     type: 'watched'
   });
   const [newListForm, setNewListForm] = useState({ title: '', description: '' });
 
   // Modal state for editing existing list
-  const [editListModal, setEditListModal] = useState<{
-    isOpen: boolean;
-    list: MediaList | null;
-  }>({
+  const [editListModal, setEditListModal] = useState<EditListModalState>({
     isOpen: false,
     list: null
   });
   const [editListForm, setEditListForm] = useState({ title: '', description: '' });
 
   // Modal state for deleting list confirmation
-  const [deleteListModal, setDeleteListModal] = useState<{
-    isOpen: boolean;
-    list: MediaList | null;
-  }>({
+  const [deleteListModal, setDeleteListModal] = useState<DeleteListModalState>({
     isOpen: false,
     list: null
   });
@@ -1960,138 +1757,6 @@ function App() {
     setSearchResults([]);
   };
 
-  const getMonthName = (m: string) => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const idx = parseInt(m, 10) - 1;
-    return months[idx] || m;
-  };
-
-  const getDaysInMonth = (yearStr: string, monthStr: string) => {
-    if (!yearStr || !monthStr) return 31;
-    const y = parseInt(yearStr, 10);
-    const m = parseInt(monthStr, 10);
-    if (isNaN(y) || isNaN(m)) return 31;
-    return new Date(y, m, 0).getDate();
-  };
-
-  const getDayOptions = (yearStr: string, monthStr: string) => {
-    const daysCount = getDaysInMonth(yearStr, monthStr);
-    const options = [];
-    for (let i = 1; i <= daysCount; i++) {
-      const val = i.toString().padStart(2, '0');
-      options.push({ value: val, label: i.toString() });
-    }
-    return options;
-  };
-
-  const getYearOptions = (selectedYear?: string) => {
-    const currentYear = new Date().getFullYear();
-    const years: string[] = [];
-    for (let y = currentYear; y >= 1900; y--) {
-      years.push(y.toString());
-    }
-    if (selectedYear && !years.includes(selectedYear) && !isNaN(parseInt(selectedYear, 10))) {
-      years.unshift(selectedYear);
-    }
-    return years;
-  };
-
-  const ListCardPosterStrip: React.FC<{ items?: Media[]; list?: MediaList }> = ({ items: propItems, list }) => {
-    const containerRef = useRef<HTMLDivElement | null>(null);
-    const [maxSlots, setMaxSlots] = useState<number>(5);
-
-    useEffect(() => {
-      const el = containerRef.current;
-      if (!el) return;
-
-      const updateSlots = (width: number) => {
-        const calculated = Math.max(1, Math.floor((width + 6) / 42));
-        setMaxSlots(calculated);
-      };
-
-      updateSlots(el.getBoundingClientRect().width);
-
-      const observer = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          if (entry.contentRect.width > 0) {
-            updateSlots(entry.contentRect.width);
-          }
-        }
-      });
-
-      observer.observe(el);
-      return () => observer.disconnect();
-    }, []);
-
-    const rawItems = list ? list.items : (propItems || []);
-    const items = list && list.type === 'watched' ? sortWatchedItemsByDefaultScore(rawItems) : rawItems;
-
-    if (!items || items.length === 0) {
-      return (
-        <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', fontStyle: 'italic', padding: '4px 0' }}>
-          Empty list
-        </div>
-      );
-    }
-
-    const showOverflow = items.length > maxSlots;
-    const visibleItems = showOverflow ? items.slice(0, maxSlots - 1) : items.slice(0, maxSlots);
-    const remainingCount = items.length - visibleItems.length;
-
-    return (
-      <div ref={containerRef} style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', width: '100%' }}>
-        {visibleItems.map((item, idx) => (
-          <div
-            key={item.id || `${item.title}-${idx}`}
-            style={{
-              width: '36px',
-              height: '52px',
-              borderRadius: 'var(--radius-sm)',
-              overflow: 'hidden',
-              backgroundColor: 'var(--bg-tertiary)',
-              flexShrink: 0,
-              border: '1px solid var(--border-color)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-            title={item.title}
-          >
-            {item.poster ? (
-              <img src={item.poster} alt={item.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              <span style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--text-tertiary)', textAlign: 'center', padding: '2px' }}>
-                {item.type === 'tv' ? <Tv size={14} /> : <Film size={14} />}
-              </span>
-            )}
-          </div>
-        ))}
-
-        {showOverflow && (
-          <div
-            style={{
-              width: '36px',
-              height: '52px',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: 'var(--bg-tertiary)',
-              border: '1px solid var(--border-color)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '0.75rem',
-              fontWeight: 750,
-              color: 'var(--accent-color)',
-              flexShrink: 0
-            }}
-            title={`${remainingCount} more item${remainingCount === 1 ? '' : 's'}`}
-          >
-            +{remainingCount}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const isSocialList = selectedListId ? selectedListId.startsWith('social:') : false;
   let currentList: MediaList | undefined;
   let socialProfile: { name?: string; picture?: string; pubkey?: string } | undefined;
@@ -2117,47 +1782,16 @@ function App() {
         /* DASHBOARD HUB (Accessible to all: Guests & Authenticated Users) */
         <div className="hub-layout">
           {/* Top User Profile / Log In Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', padding: '0.85rem 1.25rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)' }}>
-            <button
-              className="btn btn-responsive"
-              onClick={() => setIsSettingsModalOpen(true)}
-              title="App Settings"
-            >
-              <Settings size={18} /> <span className="btn-label">Settings</span>
-            </button>
-
-            {nostrUser ? (
-              <div
-                className="nostr-user-info clickable"
-                onClick={() => setIsConnectionModalOpen(true)}
-                style={{ margin: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                title="Click to view connection info or disconnect"
-              >
-                {isSyncing && <div className="spinner" style={{ width: '14px', height: '14px', border: '2px solid var(--bg-tertiary)', borderTop: '2px solid var(--accent-color)', marginRight: '6px' }}></div>}
-                {nostrUser.picture && (
-                  <img
-                    src={nostrUser.picture}
-                    alt="Avatar"
-                    style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--border-color)', marginRight: '6px' }}
-                  />
-                )}
-                <span className="nostr-pubkey" style={{ fontWeight: 700, fontSize: '1.05rem' }} title={nostrUser.pubkey}>
-                  {nostrUser.name || `${nostrUser.pubkey.substring(0, 8)}...${nostrUser.pubkey.substring(nostrUser.pubkey.length - 4)}`}
-                </span>
-              </div>
-            ) : (
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  setOnboardingStep(0);
-                  setIsOnboardingOpen(true);
-                }}
-                style={{ fontWeight: 700, padding: '0.45rem 1.1rem', fontSize: '0.95rem' }}
-              >
-                <LogIn size={16} /> Log in
-              </button>
-            )}
-          </div>
+          <HeaderBar
+            nostrUser={nostrUser}
+            isSyncing={isSyncing}
+            onOpenSettings={() => setIsSettingsModalOpen(true)}
+            onOpenConnection={() => setIsConnectionModalOpen(true)}
+            onOpenLogin={() => {
+              setOnboardingStep(0);
+              setIsOnboardingOpen(true);
+            }}
+          />
 
           {/* Hub Navigation Tabs */}
           <div className="hub-tabs">
@@ -2480,47 +2114,16 @@ function App() {
         /* PAGE 2: SINGLE LIST FOCUSED WORKSPACE */
         <div className="workspace-container">
           {/* Top User Profile / Log In Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', padding: '0.85rem 1.25rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)' }}>
-            <button
-              className="btn btn-responsive"
-              onClick={() => setIsSettingsModalOpen(true)}
-              title="App Settings"
-            >
-              <Settings size={18} /> <span className="btn-label">Settings</span>
-            </button>
-
-            {nostrUser ? (
-              <div
-                className="nostr-user-info clickable"
-                onClick={() => setIsConnectionModalOpen(true)}
-                style={{ margin: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                title="Click to view connection info or disconnect"
-              >
-                {isSyncing && <div className="spinner" style={{ width: '14px', height: '14px', border: '2px solid var(--bg-tertiary)', borderTop: '2px solid var(--accent-color)', marginRight: '6px' }}></div>}
-                {nostrUser.picture && (
-                  <img
-                    src={nostrUser.picture}
-                    alt="Avatar"
-                    style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--border-color)', marginRight: '6px' }}
-                  />
-                )}
-                <span className="nostr-pubkey" style={{ fontWeight: 700, fontSize: '1.05rem' }} title={nostrUser.pubkey}>
-                  {nostrUser.name || `${nostrUser.pubkey.substring(0, 8)}...${nostrUser.pubkey.substring(nostrUser.pubkey.length - 4)}`}
-                </span>
-              </div>
-            ) : (
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  setOnboardingStep(0);
-                  setIsOnboardingOpen(true);
-                }}
-                style={{ fontWeight: 700, padding: '0.45rem 1.1rem', fontSize: '0.95rem' }}
-              >
-                <LogIn size={16} /> Log in
-              </button>
-            )}
-          </div>
+          <HeaderBar
+            nostrUser={nostrUser}
+            isSyncing={isSyncing}
+            onOpenSettings={() => setIsSettingsModalOpen(true)}
+            onOpenConnection={() => setIsConnectionModalOpen(true)}
+            onOpenLogin={() => {
+              setOnboardingStep(0);
+              setIsOnboardingOpen(true);
+            }}
+          />
 
           {/* List Workspace Header */}
           {currentList && (
@@ -2881,2021 +2484,194 @@ function App() {
       )}
 
       {/* Global Search Modal Popup (Find & Add) */}
-      {isSearchDrawerOpen && (
-        <div className="search-drawer-overlay" onClick={() => setIsSearchDrawerOpen(false)}>
-          <div className="search-drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="search-drawer-header">
-              <h3 className="modal-title" style={{ margin: 0 }}>Find & Add Media</h3>
-              <button className="btn btn-action-icon" onClick={() => setIsSearchDrawerOpen(false)} title="Close">
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="search-drawer-body">
-              <div className="search-input-box">
-                <Search size={15} className="search-input-icon" />
-                <input
-                  type="text"
-                  className="input-field search-input"
-                  placeholder="Search movies or TV series on TheTVDB..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  autoFocus
-                />
-                {searchQuery && (
-                  <button className="btn btn-action-icon search-clear-btn" onClick={clearSearch} title="Clear search">
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-
-              <div className="search-results-list">
-                {isLoading ? (
-                  <div className="loading-container">
-                    <div className="spinner"></div>
-                    <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Searching TheTVDB...</p>
-                  </div>
-                ) : error ? (
-                  <div className="error-card" style={{ padding: '1rem', fontSize: '0.85rem' }}>{error}</div>
-                ) : searchResults.length > 0 ? (
-                  searchResults.map(item => {
-                    const alreadyInList = currentList?.items.some(x => x.id === item.id);
-                    return (
-                      <div key={item.id} className="media-card" style={{ display: 'flex', alignItems: 'center', padding: '0.5rem 0.75rem' }}>
-                        <div className="poster-container" style={{ width: '48px', height: '68px', cursor: 'pointer' }} onClick={() => openDetailsModal(item)}>
-                          {item.poster ? (
-                            <img src={item.poster} alt={item.title} className="poster-img" />
-                          ) : (
-                            <div className="media-placeholder-icon">
-                              {item.type === 'movie' ? <Film size={16} /> : <Tv size={16} />}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="media-info" style={{ flex: 1, minWidth: 0, paddingLeft: '0.75rem', overflow: 'hidden' }}>
-                          <div className="media-header">
-                            <span className="media-title clickable" onClick={() => openDetailsModal(item)} title={item.title}>
-                              {item.title}
-                            </span>
-                            <span className={`media-type-badge ${item.type}`}>
-                              {item.type === 'movie' ? <Film size={11} /> : <Tv size={11} />}
-                              <span>{item.type === 'movie' ? 'Movie' : 'TV'}</span>
-                            </span>
-                          </div>
-                          {renderDirectorCreator(item)}
-                        </div>
-
-                        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          {renderWatchlistRibbon(item)}
-                          {currentList ? (
-                            alreadyInList ? (
-                              <button className="btn btn-success" disabled style={{ padding: '4px 8px', fontSize: '0.8rem' }}>
-                                <Check size={14} /> Added
-                              </button>
-                            ) : (
-                              <button
-                                className="btn btn-primary"
-                                onClick={() => {
-                                  if (currentList.type === 'watchlist') {
-                                    addToWatchlist(item, currentList.id);
-                                  } else {
-                                    openLogWatchedModal(item, 'search', currentList.id);
-                                  }
-                                  setIsSearchDrawerOpen(false);
-                                  clearSearch();
-                                }}
-                                style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                              >
-                                <Plus size={14} /> Add
-                              </button>
-                            )
-                          ) : (
-                            isInDefaultWatched(item.id) ? (
-                              <button className="btn btn-success" disabled style={{ padding: '4px 8px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                <Check size={14} /> Logged
-                              </button>
-                            ) : (
-                              <button
-                                className="btn btn-primary"
-                                onClick={() => {
-                                  openLogWatchedModal(item, 'search');
-                                  setIsSearchDrawerOpen(false);
-                                  clearSearch();
-                                }}
-                                title="Log as watched"
-                                style={{ padding: '4px 8px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                              >
-                                <Eye size={14} /> Log as watched
-                              </button>
-                            )
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : searchQuery.trim() ? (
-                  <div className="empty-state" style={{ padding: '2rem 0' }}>
-                    <p className="empty-state-title">No matches found</p>
-                    <p className="empty-state-text">Try searching for a different title on TheTVDB.</p>
-                  </div>
-                ) : (
-                  <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '2rem 1rem', fontSize: '0.9rem' }}>
-                    Type a title above to search for movies or series to {currentList ? <>add to <strong>{renderListTitle(currentList)}</strong></> : 'bookmark or log as watched'}.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SearchModal
+        isOpen={isSearchDrawerOpen}
+        onClose={() => setIsSearchDrawerOpen(false)}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        clearSearch={clearSearch}
+        isLoading={isLoading}
+        error={error}
+        searchResults={searchResults}
+        currentList={currentList}
+        isInDefaultWatched={isInDefaultWatched}
+        openDetailsModal={openDetailsModal}
+        renderDirectorCreator={renderDirectorCreator}
+        renderWatchlistRibbon={renderWatchlistRibbon}
+        renderListTitle={renderListTitle}
+        addToWatchlist={addToWatchlist}
+        openLogWatchedModal={openLogWatchedModal}
+      />
 
       {/* Floating Red Action Button for Find & Add */}
-      {!isSearchDrawerOpen && (
-        <button
-          type="button"
-          className="fab-find-add"
-          onClick={() => setIsSearchDrawerOpen(true)}
-          title="Find & Add Media"
-          aria-label="Find & Add Media"
-        >
-          <Search size={22} color="#ffffff" strokeWidth={2.4} />
-        </button>
-      )}
+      <FloatingAddButton
+        isVisible={!isSearchDrawerOpen}
+        onClick={() => setIsSearchDrawerOpen(true)}
+      />
 
-      {/* Modal Dialog for logging watched details */}
-      {logModal.isOpen && logModal.item && (
-        <div className="modal-overlay" onClick={() => setLogModal(prev => ({ ...prev, isOpen: false, item: null }))}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-              <h3 className="modal-title" style={{ margin: 0 }}>
-                {logModal.sourceList === 'edit' ? 'Edit Watched Details' : 'Log as Watched'}
-              </h3>
-              <button
-                className="btn btn-action-icon"
-                onClick={() => setLogModal(prev => ({ ...prev, isOpen: false, item: null }))}
-              >
-                <X size={16} />
-              </button>
-            </div>
+      {/* Log Watched Modal */}
+      <LogWatchedModal
+        modal={logModal}
+        setModal={setLogModal}
+        onClose={() => setLogModal(prev => ({ ...prev, isOpen: false, item: null }))}
+        onSave={saveWatchedDetails}
+        onSetToday={setTodayDate}
+      />
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '1rem 0' }}>
-              {logModal.item.poster && (
-                <img src={logModal.item.poster} alt={logModal.item.title} style={{ width: '40px', height: '60px', objectFit: 'cover', borderRadius: '4px' }} />
-              )}
-              <div>
-                <h4 style={{ margin: 0, fontSize: '1rem' }}>{logModal.item.title}</h4>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{logModal.item.year}</div>
-              </div>
-            </div>
+      {/* TVDB Item Details Modal */}
+      <DetailsModal
+        modal={detailsModal}
+        watchedList={watchedList}
+        onClose={closeDetailsModal}
+        onRetry={(item) => openDetailsModal(item)}
+        onMarkWatched={(item) => openLogWatchedModal(item, 'search')}
+        renderWatchlistRibbon={renderWatchlistRibbon}
+      />
 
-            <div className="modal-field">
-              <label className="modal-label">Date Watched</label>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <select
-                  className="input-field select-field"
-                  value={logModal.year}
-                  onChange={(e) => setLogModal(prev => ({ ...prev, year: e.target.value, month: '', day: '' }))}
-                  style={{ flex: '1.2 1 0px', minWidth: '90px' }}
-                >
-                  <option value="">Year...</option>
-                  {getYearOptions(logModal.year).map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
+      {/* Create New List Modal */}
+      <NewListModal
+        isOpen={newListModal.isOpen}
+        type={newListModal.type}
+        setType={(type) => setNewListModal(prev => ({ ...prev, type }))}
+        formData={newListForm}
+        setFormData={setNewListForm}
+        onClose={() => setNewListModal({ isOpen: false, type: 'watched' })}
+        onCreate={createNewList}
+      />
 
-                <select
-                  className="input-field select-field"
-                  value={logModal.month}
-                  disabled={!logModal.year}
-                  onChange={(e) => setLogModal(prev => ({ ...prev, month: e.target.value, day: '' }))}
-                  style={{ flex: '1.5 1 0px', minWidth: '100px' }}
-                >
-                  <option value="">Month...</option>
-                  <option value="01">Jan (01)</option>
-                  <option value="02">Feb (02)</option>
-                  <option value="03">Mar (03)</option>
-                  <option value="04">Apr (04)</option>
-                  <option value="05">May (05)</option>
-                  <option value="06">Jun (06)</option>
-                  <option value="07">Jul (07)</option>
-                  <option value="08">Aug (08)</option>
-                  <option value="09">Sep (09)</option>
-                  <option value="10">Oct (10)</option>
-                  <option value="11">Nov (11)</option>
-                  <option value="12">Dec (12)</option>
-                </select>
+      {/* Edit List Modal */}
+      <EditListModal
+        isOpen={editListModal.isOpen}
+        list={editListModal.list}
+        formData={editListForm}
+        setFormData={setEditListForm}
+        onClose={() => setEditListModal({ isOpen: false, list: null })}
+        onSave={saveEditList}
+      />
 
-                <select
-                  className="input-field select-field"
-                  value={logModal.day}
-                  disabled={!logModal.year || !logModal.month}
-                  onChange={(e) => setLogModal(prev => ({ ...prev, day: e.target.value }))}
-                  style={{ flex: '0.8 1 0px', minWidth: '80px' }}
-                >
-                  <option value="">Day...</option>
-                  {getDayOptions(logModal.year, logModal.month).map(d => (
-                    <option key={d.value} value={d.value}>{d.label}</option>
-                  ))}
-                </select>
+      {/* Delete List Modal */}
+      <DeleteListModal
+        isOpen={deleteListModal.isOpen}
+        list={deleteListModal.list}
+        onClose={() => setDeleteListModal({ isOpen: false, list: null })}
+        onConfirm={executeDeleteList}
+      />
 
-                <button
-                  type="button"
-                  className="btn"
-                  style={{ whiteSpace: 'nowrap' }}
-                  onClick={setTodayDate}
-                >
-                  Today
-                </button>
-              </div>
-            </div>
+      {/* Follow Contact Modal */}
+      <FollowModal
+        isOpen={isFollowModalOpen}
+        inputKey={followInputKey}
+        setInputKey={setFollowInputKey}
+        error={followError}
+        onClose={() => setIsFollowModalOpen(false)}
+        onFollow={handleFollowUser}
+      />
 
-            <div className="modal-field">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <label className="modal-label">Your Rating</label>
-                {logModal.rating !== '' && (
-                  <span className="desktop-rating-score" style={{ fontSize: '0.82rem', fontWeight: 650, color: 'var(--accent-color)' }}>
-                    {logModal.rating}/10 {RATING_EMOJIS[parseFloat(logModal.rating)]?.label ? `- ${RATING_EMOJIS[parseFloat(logModal.rating)]?.label}` : ''}
-                  </span>
-                )}
-              </div>
-
-              {/* Desktop Rating View: 1-10 Emoji Buttons */}
-              <div className="rating-picker-desktop">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((val) => {
-                  const value = val.toString();
-                  const isActive = logModal.rating === value;
-                  const emojiObj = RATING_EMOJIS[val] || { emoji: '⭐', label: '' };
-                  return (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`emoji-picker-btn ${isActive ? 'active' : ''}`}
-                      onClick={() => setLogModal(prev => ({ ...prev, rating: prev.rating === value ? '' : value }))}
-                      title={`${val}/10 - ${emojiObj.label}`}
-                    >
-                      {emojiObj.emoji}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Mobile Rating View: Gradient Gauge with Dynamic Smiley Only */}
-              <div className="rating-picker-mobile rating-gauge-card">
-                <div className="rating-gauge-display">
-                  {logModal.rating !== '' ? (
-                    <div key={logModal.rating} className="rating-gauge-emoji">
-                      {getRatingEmoji(parseFloat(logModal.rating))}
-                    </div>
-                  ) : (
-                    <div className="rating-gauge-emoji" style={{ opacity: 0.35 }}>
-                      ⚪
-                    </div>
-                  )}
-                </div>
-
-                <div className="rating-gauge-slider-container">
-                  <input
-                    type="range"
-                    min="1"
-                    max="10"
-                    step="1"
-                    value={logModal.rating || '8'}
-                    onChange={(e) => setLogModal(prev => ({ ...prev, rating: e.target.value }))}
-                    className="rating-gauge-slider gradient-slider"
-                  />
-                  <div className="rating-gauge-ticks">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(val => {
-                      const valStr = val.toString();
-                      const isActive = logModal.rating === valStr;
-                      return (
-                        <button
-                          key={val}
-                          type="button"
-                          className={`rating-gauge-tick ${isActive ? 'active' : ''}`}
-                          onClick={() => setLogModal(prev => ({ ...prev, rating: valStr }))}
-                        >
-                          {val}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="modal-actions-bar">
-              <button
-                className="btn"
-                onClick={() => setLogModal(prev => ({ ...prev, isOpen: false, item: null }))}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={saveWatchedDetails}
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Dialog for viewing TVDB details */}
-      {detailsModal.isOpen && detailsModal.item && (
-        <div className="modal-overlay" onClick={closeDetailsModal}>
-          <div className="modal-content modal-content-lg" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-              <h3 className="modal-title" style={{ margin: 0 }}>
-                {detailsModal.item.type === 'tv' ? 'TV Show Details' : 'Movie Details'}
-              </h3>
-              <button
-                className="btn btn-action-icon"
-                onClick={closeDetailsModal}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {detailsModal.isLoading ? (
-              <div className="loading-container" style={{ padding: '3rem 0' }}>
-                <div className="spinner"></div>
-                <p style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                  Fetching detailed information from TheTVDB...
-                </p>
-              </div>
-            ) : detailsModal.error ? (
-              <div className="error-card" style={{ margin: '1.5rem 0' }}>
-                <p>{detailsModal.error}</p>
-                <button className="btn" onClick={() => openDetailsModal(detailsModal.item!)}>Retry</button>
-              </div>
-            ) : detailsModal.extendedInfo ? (
-              (() => {
-                const info = detailsModal.extendedInfo;
-                const item = detailsModal.item;
-                const inWatched = watchedList.some(x => x.id === item.id);
-                const hasValidPoster = item.poster && !item.poster.includes('missing/series.jpg') && !item.poster.includes('missing/movie.jpg');
-
-                const overviewText = info.overview || item.overview || 'No description available on TheTVDB.';
-                const statusStr = info.status?.name || info.status || 'N/A';
-                const firstAiredStr = info.firstAired || info.releaseDate || item.year || 'N/A';
-                const runtimeStr = info.averageRuntime ? `${info.averageRuntime} mins` : (info.runtime ? `${info.runtime} mins` : 'N/A');
-
-                let networkStudio = 'N/A';
-                if (item.type === 'tv' && info.networks && info.networks.length > 0) {
-                  networkStudio = info.networks[0].name;
-                } else if (item.type === 'movie' && info.studios && info.studios.length > 0) {
-                  networkStudio = info.studios[0].name;
-                } else if (item.creator) {
-                  networkStudio = item.creator;
-                }
-
-                return (
-                  <div className="details-grid" style={{ padding: '1rem 0' }}>
-                    <div className="details-poster-col">
-                      {hasValidPoster ? (
-                        <img src={item.poster} alt={item.title} className="details-poster-img" />
-                      ) : (
-                        <div className="details-poster-placeholder">
-                          {item.type === 'movie' ? <Film size={48} /> : <Tv size={48} />}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="details-info-col">
-                      <h2 className="details-title">{info.name || item.title}</h2>
-
-                      <div style={{ marginBottom: '0.75rem' }}>
-                        {item.genres && item.genres.length > 0 && (
-                          <div className="details-genres" style={{ marginBottom: '0.5rem' }}>
-                            {item.genres.map((g: any, idx: number) => {
-                              const genreStr = typeof g === 'string' ? g : (g?.name || String(g));
-                              return <span key={genreStr || idx} className="badge badge-subtle">{genreStr}</span>;
-                            })}
-                          </div>
-                        )}
-
-                        {item.type === 'movie' && item.director && (
-                          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                            Directed by: <strong style={{ color: 'var(--text-primary)' }}>{item.director}</strong>
-                          </div>
-                        )}
-                        {item.type === 'tv' && (info.showrunner || item.creator) && (
-                          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                            Showrunner / Creator: <strong style={{ color: 'var(--text-primary)' }}>{info.showrunner || item.creator}</strong>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="details-overview">
-                        {overviewText}
-                      </div>
-
-                      <div className="details-info-table">
-                        <span className="details-info-label">Status</span>
-                        <span className="details-info-value">{statusStr}</span>
-
-                        <span className="details-info-label">{item.type === 'tv' ? 'First Aired' : 'Released'}</span>
-                        <span className="details-info-value">{firstAiredStr}</span>
-
-                        <span className="details-info-label">{item.type === 'tv' ? 'Avg Runtime' : 'Runtime'}</span>
-                        <span className="details-info-value">{runtimeStr}</span>
-
-                        <span className="details-info-label">{item.type === 'tv' ? 'Network' : 'Studio'}</span>
-                        <span className="details-info-value">{networkStudio}</span>
-                      </div>
-
-                      <div style={{ marginTop: 'auto', paddingTop: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', borderTop: '1px solid var(--border-color)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          {renderWatchlistRibbon(item)}
-
-                          {inWatched ? (
-                            <button className="btn btn-success" disabled>
-                              <Check size={14} /> Watched
-                            </button>
-                          ) : (
-                            <button
-                              className="btn btn-primary"
-                              onClick={() => {
-                                closeDetailsModal();
-                                openLogWatchedModal(item, 'search');
-                              }}
-                            >
-                              <Check size={14} /> Mark Watched
-                            </button>
-                          )}
-                        </div>
-
-                        {info.slug && (
-                          <a
-                            href={`https://thetvdb.com/${item.type === 'tv' ? 'series' : 'movies'}/${info.slug}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn btn-subtle"
-                            style={{ fontSize: '0.8rem', padding: '4px 8px' }}
-                          >
-                            View on TVDB <ExternalLink size={12} style={{ marginLeft: '4px' }} />
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()
-            ) : null}
-          </div>
-        </div>
-      )}
-
-      {/* Modal Dialog for creating a new custom list */}
-      {newListModal.isOpen && (
-        <div className="modal-overlay" onClick={() => setNewListModal({ isOpen: false, type: 'watched' })}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-              <h3 className="modal-title" style={{ margin: 0 }}>
-                Create New List
-              </h3>
-              <button
-                className="btn btn-action-icon"
-                onClick={() => setNewListModal({ isOpen: false, type: 'watched' })}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={createNewList} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginTop: '1.25rem' }}>
-              <div className="modal-field">
-                <label className="modal-label">List Type</label>
-                <div style={{ display: 'flex', gap: '6px', padding: '4px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', border: '1px solid #eaeaea' }}>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => setNewListModal(prev => ({ ...prev, type: 'watched' }))}
-                    style={{
-                      flex: 1,
-                      border: 'none',
-                      backgroundColor: newListModal.type === 'watched' ? 'var(--accent-color)' : 'transparent',
-                      color: newListModal.type === 'watched' ? '#ffffff' : 'var(--text-secondary)',
-                      fontWeight: newListModal.type === 'watched' ? 700 : 500,
-                      boxShadow: newListModal.type === 'watched' ? 'var(--shadow-sm)' : 'none',
-                      transition: 'all var(--transition-fast)'
-                    }}
-                  >
-                    Watched
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => setNewListModal(prev => ({ ...prev, type: 'watchlist' }))}
-                    style={{
-                      flex: 1,
-                      border: 'none',
-                      backgroundColor: newListModal.type === 'watchlist' ? 'var(--accent-color)' : 'transparent',
-                      color: newListModal.type === 'watchlist' ? '#ffffff' : 'var(--text-secondary)',
-                      fontWeight: newListModal.type === 'watchlist' ? 700 : 500,
-                      boxShadow: newListModal.type === 'watchlist' ? 'var(--shadow-sm)' : 'none',
-                      transition: 'all var(--transition-fast)'
-                    }}
-                  >
-                    To Watch
-                  </button>
-                </div>
-              </div>
-
-              <div className="modal-field">
-                <label className="modal-label">List Title *</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder={newListModal.type === 'watched' ? "e.g., Summer 2026 Horror Movies" : "e.g., Sci-Fi Favorites To Watch"}
-                  value={newListForm.title}
-                  onChange={(e) => setNewListForm(prev => ({ ...prev, title: e.target.value }))}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              <div className="modal-field">
-                <label className="modal-label">Description (Optional)</label>
-                <textarea
-                  className="input-field"
-                  placeholder="Provide a brief description for this list..."
-                  rows={3}
-                  value={newListForm.description}
-                  onChange={(e) => setNewListForm(prev => ({ ...prev, description: e.target.value }))}
-                  style={{ resize: 'vertical' }}
-                />
-              </div>
-
-              <div className="modal-actions-bar">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => setNewListModal({ isOpen: false, type: 'watched' })}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                >
-                  Create & Publish List
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Dialog for editing existing list */}
-      {editListModal.isOpen && editListModal.list && (
-        <div className="modal-overlay" onClick={() => setEditListModal({ isOpen: false, list: null })}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-              <h3 className="modal-title" style={{ margin: 0 }}>Edit List Details</h3>
-              <button className="btn btn-action-icon" onClick={() => setEditListModal({ isOpen: false, list: null })}>
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={saveEditList} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginTop: '1.25rem' }}>
-              <div className="modal-field">
-                <label className="modal-label">List Title *</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  value={editListForm.title}
-                  onChange={(e) => setEditListForm(prev => ({ ...prev, title: e.target.value }))}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              <div className="modal-field">
-                <label className="modal-label">Description (Optional)</label>
-                <textarea
-                  className="input-field"
-                  placeholder="Provide a brief description for this list..."
-                  rows={3}
-                  value={editListForm.description}
-                  onChange={(e) => setEditListForm(prev => ({ ...prev, description: e.target.value }))}
-                  style={{ resize: 'vertical' }}
-                />
-              </div>
-
-              <div className="modal-actions-bar">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => setEditListModal({ isOpen: false, list: null })}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                >
-                  <Check size={16} /> Save & Publish
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Dialog for deleting list confirmation */}
-      {deleteListModal.isOpen && deleteListModal.list && (
-        <div className="modal-overlay" onClick={() => setDeleteListModal({ isOpen: false, list: null })}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-              <h3 className="modal-title" style={{ margin: 0, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Trash2 size={18} /> Delete List
-              </h3>
-              <button className="btn btn-action-icon" onClick={() => setDeleteListModal({ isOpen: false, list: null })}>
-                <X size={16} />
-              </button>
-            </div>
-
-            <div style={{ padding: '1.25rem 0 0.5rem 0' }}>
-              <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.95rem', color: 'var(--text-primary)', lineHeight: '1.5' }}>
-                Are you sure you want to delete <strong>"{deleteListModal.list.title}"</strong>?
-              </p>
-              <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                This action will permanently remove the list and publish a deletion request to Nostr relays. This cannot be undone.
-              </p>
-            </div>
-
-            <div className="modal-actions-bar" style={{ marginTop: '1.25rem' }}>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setDeleteListModal({ isOpen: false, list: null })}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ backgroundColor: '#ef4444', borderColor: '#ef4444', color: '#ffffff' }}
-                onClick={executeDeleteList}
-              >
-                <Trash2 size={16} /> Delete Permanently
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Dialog for Following a new Contact (kind:10016) */}
-      {isFollowModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsFollowModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-              <h3 className="modal-title" style={{ margin: 0 }}>Follow Nostr Contact</h3>
-              <button className="btn btn-action-icon" onClick={() => setIsFollowModalOpen(false)}>
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={(e) => { e.preventDefault(); handleFollowUser(followInputKey); }} style={{ marginTop: '1rem' }}>
-              <div className="modal-field">
-                <label className="modal-label">Nostr Public Key (npub1... or 64-char Hex) *</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="npub1..."
-                  value={followInputKey}
-                  onChange={(e) => setFollowInputKey(e.target.value)}
-                  required
-                  autoFocus
-                />
-                {followError && (
-                  <span style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: '0.4rem', display: 'block' }}>
-                    {followError}
-                  </span>
-                )}
-              </div>
-
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0.5rem 0 1rem 0' }}>
-                Following a profile adds their <code>p</code> tag to your <code>kind:10016</code> media follow list on Nostr, allowing you to discover their <code>kind:30016</code> logs.
-              </p>
-
-              <div className="modal-actions-bar">
-                <button type="button" className="btn" onClick={() => setIsFollowModalOpen(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary">
-                  <UserPlus size={16} /> Follow Profile
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Author Profile Summary Modal */}
-      {authorProfileModal.isOpen && authorProfileModal.pubkey && (() => {
-        const pk = authorProfileModal.pubkey;
-        const profile = followedProfiles[pk] || exploreProfiles[pk];
-        const displayName = profile?.name || `${pk.substring(0, 8)}...${pk.substring(pk.length - 4)}`;
-        const isFollowing = followedPubkeys.includes(pk);
-        const isSelf = nostrUser?.pubkey === pk;
-        const userLists = followedListsMap[pk] || exploreLists.filter(l => l.id.startsWith(`social:${pk}:`));
-
-        return (
-          <div className="modal-overlay" onClick={() => setAuthorProfileModal({ isOpen: false, pubkey: null })}>
-            <div className="modal-content" style={{ maxWidth: '480px', width: '90%' }} onClick={e => e.stopPropagation()}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-                <h3 className="modal-title" style={{ margin: 0 }}>Author Profile</h3>
-                <button className="btn btn-action-icon" onClick={() => setAuthorProfileModal({ isOpen: false, pubkey: null })}>
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div style={{ padding: '1.25rem 0 0.5rem 0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '1.25rem' }}>
-                  {profile?.picture ? (
-                    <img
-                      src={profile.picture}
-                      alt={displayName}
-                      style={{ width: '52px', height: '52px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--border-color)' }}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        width: '52px',
-                        height: '52px',
-                        borderRadius: '50%',
-                        backgroundColor: 'var(--accent-color)',
-                        color: '#fff',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '1.4rem',
-                        fontWeight: 700
-                      }}
-                    >
-                      {displayName.substring(0, 1).toUpperCase()}
-                    </div>
-                  )}
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, wordBreak: 'break-word' }}>{displayName}</h4>
-                    <div
-                      style={{
-                        fontSize: '0.8rem',
-                        color: 'var(--text-tertiary)',
-                        marginTop: '0.2rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                    >
-                      <span style={{ fontFamily: 'monospace' }}>npub: {pk.substring(0, 10)}...{pk.substring(pk.length - 6)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {!isSelf && (
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '1.25rem' }}>
-                    {isFollowing ? (
-                      <button
-                        className="btn btn-action-icon btn-delete"
-                        style={{ flex: 1, justifyContent: 'center', padding: '0.6rem 1rem' }}
-                        onClick={() => handleUnfollowUser(pk)}
-                      >
-                        <UserMinus size={16} /> Unfollow
-                      </button>
-                    ) : (
-                      <button
-                        className="btn btn-primary"
-                        style={{ flex: 1, justifyContent: 'center', padding: '0.6rem 1rem' }}
-                        onClick={() => handleFollowUser(pk)}
-                      >
-                        <UserPlus size={16} /> Follow
-                      </button>
-                    )}
-
-                    {blockedPubkeys.includes(pk) ? (
-                      <button
-                        className="btn"
-                        style={{ flex: 1, justifyContent: 'center', padding: '0.6rem 1rem' }}
-                        onClick={() => handleUnblockUser(pk)}
-                        title="Unblock profile"
-                      >
-                        <UserX size={16} /> Unblock
-                      </button>
-                    ) : (
-                      <button
-                        className="btn btn-action-icon btn-delete"
-                        style={{ flex: 1, justifyContent: 'center', padding: '0.6rem 1rem' }}
-                        onClick={() => {
-                          handleBlockUser(pk);
-                          setAuthorProfileModal({ isOpen: false, pubkey: null });
-                        }}
-                        title="Block profile"
-                      >
-                        <UserX size={16} /> Block
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                <div>
-                  <h5 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                    Public Watchlists ({userLists.length})
-                  </h5>
-
-                  {userLists.length === 0 ? (
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                      No public watchlists loaded for this profile yet.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
-                      {userLists.map(list => (
-                        <div
-                          key={list.id}
-                          style={{
-                            padding: '0.6rem 0.8rem',
-                            borderRadius: 'var(--radius-md)',
-                            backgroundColor: 'var(--bg-secondary)',
-                            border: '1px solid var(--border-color)',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            cursor: 'pointer'
-                          }}
-                          onClick={() => {
-                            setAuthorProfileModal({ isOpen: false, pubkey: null });
-                            openWatchlist(list.id);
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{renderListTitle(list)}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                              {list.items.length} item{list.items.length === 1 ? '' : 's'}
-                            </div>
-                          </div>
-                          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent-color)' }}>Open →</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-      {/* Connection Info & Profile Setup Modal */}
-      {isConnectionModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsConnectionModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
-            <div className="modal-header">
-              <h3 className="modal-title" style={{ margin: 0, fontSize: '1.25rem' }}>Account & Profile</h3>
-              <button className="btn btn-action-icon" onClick={() => setIsConnectionModalOpen(false)} title="Close">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              {/* Profile Setup Form */}
-              <form onSubmit={handlePublishProfile} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                  Nostr Profile
-                </div>
-
-                {/* Avatar Drag & Drop & Crop Dropzone */}
-                <div
-                  onDragOver={(e) => { e.preventDefault(); setIsDraggingAvatar(true); }}
-                  onDragLeave={() => setIsDraggingAvatar(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setIsDraggingAvatar(false);
-                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                      handleFileSelection(e.dataTransfer.files[0]);
-                    }
-                  }}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '1rem',
-                    border: isDraggingAvatar ? '2px dashed var(--accent-color)' : '1px dashed var(--border-color)',
-                    backgroundColor: isDraggingAvatar ? 'var(--accent-color-light)' : 'var(--bg-secondary)',
-                    borderRadius: 'var(--radius-md)',
-                    gap: '0.75rem',
-                    textAlign: 'center',
-                    transition: 'all var(--transition-fast)'
-                  }}
-                >
-                  {/* Interactive Crop / Preview Frame */}
-                  {selectedImageFile ? (
-                    <div
-                      style={{
-                        width: '120px',
-                        height: '120px',
-                        borderRadius: '50%',
-                        overflow: 'hidden',
-                        position: 'relative',
-                        border: '3px solid var(--accent-color)',
-                        cursor: isDraggingPhoto ? 'grabbing' : 'grab',
-                        userSelect: 'none',
-                        touchAction: 'none'
-                      }}
-                      onMouseDown={(e) => {
-                        setIsDraggingPhoto(true);
-                        dragStartRef.current = { x: e.clientX - cropOffset.x, y: e.clientY - cropOffset.y };
-                      }}
-                      onMouseMove={(e) => {
-                        if (!isDraggingPhoto) return;
-                        setCropOffset({
-                          x: e.clientX - dragStartRef.current.x,
-                          y: e.clientY - dragStartRef.current.y
-                        });
-                      }}
-                      onMouseUp={() => setIsDraggingPhoto(false)}
-                      onMouseLeave={() => setIsDraggingPhoto(false)}
-                      onTouchStart={(e) => {
-                        if (e.touches[0]) {
-                          setIsDraggingPhoto(true);
-                          dragStartRef.current = { x: e.touches[0].clientX - cropOffset.x, y: e.touches[0].clientY - cropOffset.y };
-                        }
-                      }}
-                      onTouchMove={(e) => {
-                        if (isDraggingPhoto && e.touches[0]) {
-                          setCropOffset({
-                            x: e.touches[0].clientX - dragStartRef.current.x,
-                            y: e.touches[0].clientY - dragStartRef.current.y
-                          });
-                        }
-                      }}
-                      onTouchEnd={() => setIsDraggingPhoto(false)}
-                    >
-                      <img
-                        src={profileEditPicture}
-                        alt="Avatar Crop Preview"
-                        draggable={false}
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'cover',
-                          transform: `translate(${cropOffset.x}px, ${cropOffset.y}px) scale(${cropZoom})`,
-                          transformOrigin: 'center',
-                          pointerEvents: 'none'
-                        }}
-                      />
-                    </div>
-                  ) : profileEditPicture ? (
-                    <img
-                      src={profileEditPicture}
-                      alt="Avatar Preview"
-                      style={{ width: '64px', height: '64px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--accent-color)' }}
-                    />
-                  ) : (
-                    <div className="profile-avatar-fallback" style={{ width: '64px', height: '64px', fontSize: '1.75rem' }}>
-                      {(profileEditName || nostrUser?.name || 'A').substring(0, 1).toUpperCase()}
-                    </div>
-                  )}
-
-                  {/* Interactive Crop Controls or File Picker */}
-                  {selectedImageFile ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', width: '100%' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', maxWidth: '220px' }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Zoom</span>
-                        <input
-                          type="range"
-                          min="1"
-                          max="3"
-                          step="0.05"
-                          value={cropZoom}
-                          onChange={(e) => setCropZoom(parseFloat(e.target.value))}
-                          style={{ flex: 1, accentColor: 'var(--accent-color)' }}
-                        />
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>
-                          {cropZoom.toFixed(1)}x
-                        </span>
-                      </div>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--accent-color)', fontWeight: 600 }}>
-                        Drag photo to center • Use slider to zoom
-                      </span>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
-                      <label className="btn btn-small btn-primary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        <Upload size={14} /> Choose Photo
-                        <input
-                          type="file"
-                          accept="image/*"
-                          disabled={isPublishingProfile || nostrUser?.readOnly}
-                          onChange={(e) => {
-                            if (e.target.files && e.target.files[0]) {
-                              handleFileSelection(e.target.files[0]);
-                            }
-                          }}
-                          style={{ display: 'none' }}
-                        />
-                      </label>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                        Drag & drop image here or choose photo
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Name Input */}
-                <div className="modal-field">
-                  <label className="modal-label">Display Name</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="e.g. Satoshi"
-                    value={profileEditName}
-                    onChange={(e) => setProfileEditName(e.target.value)}
-                    disabled={isPublishingProfile || nostrUser?.readOnly}
-                    required
-                  />
-                </div>
-
-                {/* Picture URL Input */}
-                <div className="modal-field">
-                  <label className="modal-label">Profile Picture URL</label>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '0.25rem' }}>
-                    <input
-                      type="url"
-                      className="input-field"
-                      placeholder="https://nostr.build/i/..."
-                      value={profileEditPicture}
-                      onChange={(e) => {
-                        setProfileEditPicture(e.target.value);
-                        setSelectedImageFile(null);
-                      }}
-                      disabled={isPublishingProfile || nostrUser?.readOnly}
-                      style={{ flex: 1 }}
-                    />
-                    {profileEditPicture && (
-                      <button
-                        type="button"
-                        className="btn btn-action-icon"
-                        onClick={() => {
-                          navigator.clipboard.writeText(profileEditPicture);
-                          setProfileStatus({ type: 'success', message: 'Profile picture URL copied to clipboard!' });
-                        }}
-                        title="Copy image URL"
-                      >
-                        <Copy size={16} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {profileStatus && (
-                  <div style={{
-                    fontSize: '0.85rem',
-                    padding: '8px 12px',
-                    borderRadius: 'var(--radius-sm)',
-                    backgroundColor: profileStatus.type === 'success' ? 'rgba(21, 128, 61, 0.12)' : 'rgba(239, 68, 68, 0.1)',
-                    color: profileStatus.type === 'success' ? '#15803d' : '#ef4444',
-                    border: `1px solid ${profileStatus.type === 'success' ? 'rgba(21, 128, 61, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
-                  }}>
-                    {profileStatus.message}
-                  </div>
-                )}
-
-                {nostrUser?.readOnly ? (
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                    Connected in Read-Only mode. Sign in with Extension or Bunker to edit profile.
-                  </div>
-                ) : (
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={isPublishingProfile}
-                    style={{ width: '100%', justifyContent: 'center', padding: '0.65rem' }}
-                  >
-                    {isPublishingProfile ? (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                        <RefreshCw size={16} className="spin" />
-                        {publishingStep === 'uploading'
-                          ? 'Uploading Photo (check bunker)...'
-                          : 'Publishing Profile (check bunker)...'}
-                      </span>
-                    ) : (
-                      'Save Profile'
-                    )}
-                  </button>
-                )}
-              </form>
-
-              {/* Connection Type & Public Key Details */}
-              <div style={{ backgroundColor: 'var(--bg-secondary)', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Connection Type</span>
-                  <div>
-                    {nostrUser?.signerType === 'bunker' && <span className="bunker-badge" style={{ margin: 0 }}>NIP-46 Remote Signer</span>}
-                    {nostrUser?.signerType === 'extension' && <span className="bunker-badge" style={{ backgroundColor: 'var(--accent-color)', color: '#fff', margin: 0 }}>Extension (NIP-07)</span>}
-                    {nostrUser?.readOnly && <span className="read-only-badge" style={{ margin: 0 }}>Read-Only Mode</span>}
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '0.25rem' }}>Public Key (npub)</div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                    <code style={{ fontSize: '0.8rem', wordBreak: 'break-all', userSelect: 'all' }}>
-                      {nostrUser?.pubkey ? `${nostrUser.pubkey.substring(0, 16)}...${nostrUser.pubkey.substring(nostrUser.pubkey.length - 8)}` : ''}
-                    </code>
-                    <button
-                      className="btn btn-small"
-                      type="button"
-                      onClick={() => {
-                        if (nostrUser?.pubkey) {
-                          navigator.clipboard.writeText(nostrUser.pubkey);
-                        }
-                      }}
-                      title="Copy Public Key"
-                    >
-                      <Copy size={14} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <button
-                className="btn btn-delete"
-                style={{ width: '100%', padding: '0.75rem', justifyContent: 'center', marginTop: '0.25rem', fontWeight: 700 }}
-                onClick={() => {
-                  logoutNostr();
-                  setIsConnectionModalOpen(false);
-                }}
-              >
-                <LogOut size={16} /> Disconnect Account
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Author Profile Modal */}
+      <AuthorProfileModal
+        isOpen={authorProfileModal.isOpen}
+        pubkey={authorProfileModal.pubkey}
+        onClose={() => setAuthorProfileModal({ isOpen: false, pubkey: null })}
+        followedProfiles={followedProfiles}
+        exploreProfiles={exploreProfiles}
+        followedPubkeys={followedPubkeys}
+        nostrUser={nostrUser}
+        followedListsMap={followedListsMap}
+        exploreLists={exploreLists}
+        blockedPubkeys={blockedPubkeys}
+        onFollowUser={handleFollowUser}
+        onUnfollowUser={handleUnfollowUser}
+        onBlockUser={handleBlockUser}
+        onUnblockUser={handleUnblockUser}
+        onOpenWatchlist={openWatchlist}
+      />
+      {/* Account & Profile Connection Modal */}
+      <ConnectionModal
+        isOpen={isConnectionModalOpen}
+        onClose={() => setIsConnectionModalOpen(false)}
+        nostrUser={nostrUser}
+        profileEditName={profileEditName}
+        setProfileEditName={setProfileEditName}
+        profileEditPicture={profileEditPicture}
+        setProfileEditPicture={setProfileEditPicture}
+        selectedImageFile={selectedImageFile}
+        setSelectedImageFile={setSelectedImageFile}
+        cropZoom={cropZoom}
+        setCropZoom={setCropZoom}
+        cropOffset={cropOffset}
+        setCropOffset={setCropOffset}
+        isDraggingPhoto={isDraggingPhoto}
+        setIsDraggingPhoto={setIsDraggingPhoto}
+        dragStartRef={dragStartRef}
+        isDraggingAvatar={isDraggingAvatar}
+        setIsDraggingAvatar={setIsDraggingAvatar}
+        isPublishingProfile={isPublishingProfile}
+        publishingStep={publishingStep}
+        profileStatus={profileStatus}
+        setProfileStatus={setProfileStatus}
+        handleFileSelection={handleFileSelection}
+        handlePublishProfile={handlePublishProfile}
+        logoutNostr={logoutNostr}
+      />
 
       {/* Settings Modal */}
-      {isSettingsModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsSettingsModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
-            <div className="modal-header">
-              <h3 className="modal-title" style={{ margin: 0, fontSize: '1.25rem' }}>App Settings</h3>
-              <button className="btn btn-action-icon" onClick={() => setIsSettingsModalOpen(false)} title="Close">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              {/* Relays Section */}
-              <div>
-                <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.95rem', fontWeight: 700 }}>Connected Relays</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {DEFAULT_RELAYS.map(relay => {
-                    const status = relayStatuses[relay];
-                    const isConnected = status === true;
-                    const statusText = status === true ? 'connected' : status === false ? 'disconnected' : 'connecting';
-                    return (
-                      <div key={relay} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
-                        <span style={{ fontFamily: 'monospace' }}>{relay}</span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isConnected ? '#22c55e' : '#eab308' }}>
-                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isConnected ? '#22c55e' : '#eab308' }}></span>
-                          {statusText}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Blocked Users Section */}
-              <div>
-                <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.95rem', fontWeight: 700 }}>
-                  Blocked Users ({blockedPubkeys.length})
-                </h4>
-                {blockedPubkeys.length === 0 ? (
-                  <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-                    No blocked users.
-                  </p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
-                    {blockedPubkeys.map(pk => {
-                      const profile = followedProfiles[pk] || exploreProfiles[pk];
-                      const displayName = profile?.name || `${pk.substring(0, 8)}...${pk.substring(pk.length - 4)}`;
-                      return (
-                        <div key={pk} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.75rem', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            {profile?.picture ? (
-                              <img src={profile.picture} alt={displayName} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
-                            ) : (
-                              <div className="profile-avatar-fallback" style={{ width: '20px', height: '20px', fontSize: '0.7rem' }}>
-                                {displayName.substring(0, 1).toUpperCase()}
-                              </div>
-                            )}
-                            <span style={{ fontWeight: 600 }}>{displayName}</span>
-                          </div>
-                          <button
-                            className="btn btn-small"
-                            onClick={() => handleUnblockUser(pk)}
-                            title="Unblock user"
-                          >
-                            <UserX size={14} /> Unblock
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* GUIDED ONBOARDING & DIRECT LOGIN MODAL */}
-      {isOnboardingOpen && (
-        <div className="modal-overlay" onClick={() => { if (onboardingStep !== 4) setIsOnboardingOpen(false); }}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
-
-            {/* Modal Header & Progress Indicator */}
-            <div className="modal-header" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Sparkles size={20} style={{ color: 'var(--accent-color)' }} />
-                <h3 className="modal-title" style={{ margin: 0, fontSize: '1.2rem' }}>
-                  {onboardingStep === 0 ? 'Welcome to Watchlistr' : onboardingStep === 'expert' ? 'Sign In to Watchlistr' : 'Nostr Setup Guide'}
-                </h3>
-                {onboardingStep === 0 ? (
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', backgroundColor: 'var(--bg-tertiary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)' }}>
-                    Sign In
-                  </span>
-                ) : onboardingStep === 'expert' ? (
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-color)', backgroundColor: 'var(--accent-color-light)', padding: '2px 8px', borderRadius: 'var(--radius-sm)' }}>
-                    Expert Mode
-                  </span>
-                ) : (
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-color)', backgroundColor: 'var(--accent-color-light)', padding: '2px 8px', borderRadius: 'var(--radius-sm)' }}>
-                    Step {onboardingStep} of 4
-                  </span>
-                )}
-              </div>
-              <button
-                className="btn btn-action-icon"
-                onClick={() => setIsOnboardingOpen(false)}
-                title="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', padding: '0.5rem 0' }}>
-
-              {/* STEP 0: WELCOME & INITIAL METHOD SELECTION */}
-              {onboardingStep === 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center', alignItems: 'center', padding: '1rem 0.5rem' }}>
-                  <div style={{
-                    width: '52px',
-                    height: '52px',
-                    borderRadius: '50%',
-                    backgroundColor: 'var(--accent-color-light)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'var(--accent-color)',
-                    marginBottom: '0.25rem'
-                  }}>
-                    <Sparkles size={28} />
-                  </div>
-
-                  <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                    Welcome to Watchlistr! 🍿
-                  </div>
-
-                  <p style={{ margin: 0, fontSize: '0.92rem', color: 'var(--text-secondary)', lineHeight: 1.55, maxWidth: '420px' }}>
-                    Watchlistr is built on <strong>Nostr</strong> — an open network where you own 100% of your watchlists and profile. We'll guide you step-by-step to set up your mobile key manager.
-                  </p>
-
-                  <button
-                    className="btn btn-primary"
-                    style={{
-                      width: '100%',
-                      maxWidth: '360px',
-                      padding: '0.8rem 1.25rem',
-                      fontSize: '1rem',
-                      fontWeight: 700,
-                      justifyContent: 'center',
-                      marginTop: '0.5rem'
-                    }}
-                    onClick={() => {
-                      const dev = detectDeviceType();
-                      setOnboardingDesktopDevice(null);
-                      if (dev === 'android' || dev === 'ios') {
-                        setOnboardingStep(2);
-                      } else {
-                        setOnboardingStep(1);
-                      }
-                    }}
-                  >
-                    <Sparkles size={18} /> Help me set up an account →
-                  </button>
-
-                  {/* De-emphasized option for experienced users */}
-                  <div style={{ marginTop: '0.5rem' }}>
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => setOnboardingStep('expert')}
-                      style={{
-                        fontSize: '0.88rem',
-                        color: 'var(--text-secondary)',
-                        textDecoration: 'underline',
-                        border: 'none',
-                        backgroundColor: 'transparent',
-                        cursor: 'pointer',
-                        padding: '0.4rem 0.8rem'
-                      }}
-                    >
-                      I can manage my Nostr connection
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* EXPERT MODE: DIRECT LOGIN TABS ONLY (NO GUIDED SETUP CLUTTER) */}
-              {onboardingStep === 'expert' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 800 }}>Connect Your Nostr Account</div>
-                    <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      Choose your preferred sign-in method below.
-                    </p>
-                  </div>
-
-                  {/* Direct Login Tabs */}
-                  <div style={{ display: 'flex', gap: '6px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                    <button
-                      type="button"
-                      className={`btn btn-small ${directAuthTab === 'bunker' ? 'btn-primary' : 'btn-action-icon'}`}
-                      onClick={() => { setDirectAuthTab('bunker'); setBunkerError(null); }}
-                      style={{ flex: 1, justifyContent: 'center', padding: '0.5rem', fontSize: '0.85rem' }}
-                    >
-                      <Smartphone size={15} style={{ marginRight: '4px' }} /> Remote Signer
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn btn-small ${directAuthTab === 'extension' ? 'btn-primary' : 'btn-action-icon'}`}
-                      onClick={() => { setDirectAuthTab('extension'); setBunkerError(null); }}
-                      style={{ flex: 1, justifyContent: 'center', padding: '0.5rem', fontSize: '0.85rem' }}
-                    >
-                      <Check size={15} style={{ marginRight: '4px' }} /> Extension
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn btn-small ${directAuthTab === 'readonly' ? 'btn-primary' : 'btn-action-icon'}`}
-                      onClick={() => { setDirectAuthTab('readonly'); setBunkerError(null); }}
-                      style={{ flex: 1, justifyContent: 'center', padding: '0.5rem', fontSize: '0.85rem' }}
-                    >
-                      <User size={15} style={{ marginRight: '4px' }} /> Read-Only
-                    </button>
-                  </div>
-
-                  {/* Tab 1: Remote Signer (NIP-46) */}
-                  {directAuthTab === 'bunker' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                      <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        Connect securely via Amber, Clave, Nsec.app, or any NIP-46 remote signer app.
-                      </p>
-
-                      <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '4px', borderRadius: 'var(--radius-md)' }}>
-                        <button
-                          type="button"
-                          className={`btn ${bunkerConnectMode === 'qr' ? 'btn-primary' : 'btn-action-icon'}`}
-                          onClick={() => { setBunkerConnectMode('qr'); handleStartNostrConnect(); }}
-                          style={{ flex: 1, justifyContent: 'center', padding: '0.4rem 0.5rem', fontSize: '0.82rem' }}
-                        >
-                          Pair App / QR
-                        </button>
-                        <button
-                          type="button"
-                          className={`btn ${bunkerConnectMode === 'manual' ? 'btn-primary' : 'btn-action-icon'}`}
-                          onClick={() => setBunkerConnectMode('manual')}
-                          style={{ flex: 1, justifyContent: 'center', padding: '0.4rem 0.5rem', fontSize: '0.82rem' }}
-                        >
-                          Paste Bunker URI
-                        </button>
-                      </div>
-
-                      {bunkerConnectMode === 'qr' ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.85rem', width: '100%', padding: '0.25rem 0' }}>
-                          {nostrConnectUri ? (
-                            <>
-                              <div style={{ backgroundColor: '#ffffff', padding: '12px', borderRadius: 'var(--radius-md)', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
-                                <img
-                                  src={`https://api.qrserver.com/v1/create-qr-code/?size=170x170&data=${encodeURIComponent(nostrConnectUri)}`}
-                                  alt="Nostr Connect QR Code"
-                                  width={170}
-                                  height={170}
-                                  style={{ display: 'block' }}
-                                />
-                              </div>
-
-                              <a
-                                href={nostrConnectUri}
-                                className="btn btn-primary"
-                                style={{ width: '100%', justifyContent: 'center', padding: '0.7rem', color: '#ffffff', textDecoration: 'none', fontWeight: 700 }}
-                              >
-                                Open in Remote Signer App
-                              </a>
-
-                              {authChallengeUrl && (
-                                <a
-                                  href={authChallengeUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="btn btn-primary"
-                                  style={{ width: '100%', justifyContent: 'center', padding: '0.7rem', backgroundColor: '#e11d48' }}
-                                >
-                                  Complete Auth Challenge in Browser
-                                </a>
-                              )}
-
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: 'var(--accent-color)' }}>
-                                <RefreshCw size={14} className="spin" /> Waiting for remote authorization...
-                              </div>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn btn-primary"
-                              onClick={handleStartNostrConnect}
-                              disabled={isNostrConnectListening}
-                              style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', fontWeight: 700 }}
-                            >
-                              {isNostrConnectListening ? 'Generating pairing connection...' : 'Start Nostr Connect Pairing'}
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <form onSubmit={(e) => { e.preventDefault(); handleDirectBunkerManualLogin(bunkerInputUrl); }} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                          <input
-                            type="text"
-                            className="input-field"
-                            placeholder="bunker://... or npub1...#bunker=..."
-                            value={bunkerInputUrl}
-                            onChange={(e) => setBunkerInputUrl(e.target.value)}
-                            required
-                          />
-                          <button
-                            type="submit"
-                            className="btn btn-primary"
-                            disabled={bunkerConnecting}
-                            style={{ width: '100%', justifyContent: 'center', padding: '0.7rem' }}
-                          >
-                            {bunkerConnecting ? 'Connecting...' : 'Connect Bunker'}
-                          </button>
-                        </form>
-                      )}
-
-                      {bunkerError && (
-                        <div style={{ color: '#ef4444', fontSize: '0.85rem', textAlign: 'center', backgroundColor: 'rgba(239,68,68,0.1)', padding: '8px 12px', borderRadius: 'var(--radius-sm)' }}>
-                          {bunkerError}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Tab 2: Extension (NIP-07) */}
-                  {directAuthTab === 'extension' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'center' }}>
-                      {hasNostrExtension ? (
-                        <>
-                          <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-                            NIP-07 browser extension detected (Alby, nos2x). Click below to sign in instantly.
-                          </p>
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            onClick={handleDirectExtensionLogin}
-                            style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', fontWeight: 700 }}
-                          >
-                            Sign In with Extension (NIP-07)
-                          </button>
-                        </>
-                      ) : (
-                        <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                          No browser extension detected. Install <a href="https://getalby.com" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-color)' }}>Alby</a> or <a href="https://github.com/fiatjaf/nos2x" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-color)' }}>nos2x</a>, or use the <strong>Remote Signer</strong> option for mobile!
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Tab 3: Read-Only Mode */}
-                  {directAuthTab === 'readonly' && (
-                    <form onSubmit={(e) => { e.preventDefault(); handleDirectReadOnlyLogin(readOnlyInputKey); }} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                      <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        Enter any Nostr public key or npub to view their watchlists in read-only mode:
-                      </p>
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="npub1... or hex public key"
-                        value={readOnlyInputKey}
-                        onChange={(e) => setReadOnlyInputKey(e.target.value)}
-                        required
-                      />
-                      <button
-                        type="submit"
-                        className="btn btn-primary"
-                        style={{ width: '100%', justifyContent: 'center', padding: '0.7rem' }}
-                      >
-                        Connect Read-Only Mode
-                      </button>
-                    </form>
-                  )}
-                </div>
-              )}
-
-              {/* STEP 1: DEVICE SELECTION (DESKTOP / IOS NOTICE) */}
-              {onboardingStep === 1 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                  {onboardingDesktopDevice === 'ios' || detectDeviceType() === 'ios' ? (
-                    <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' }}>
-                      <Smartphone size={40} style={{ color: 'var(--accent-color)' }} />
-                      <div style={{ fontSize: '1.2rem', fontWeight: 800 }}>iPhone & iPad Guidance Coming Soon</div>
-                      <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                        We currently recommend an <strong>Android device (with Amber)</strong> or a <strong>Desktop Computer</strong> for the easiest onboarding experience.
-                      </p>
-                      <button
-                        className="btn btn-primary"
-                        style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', marginTop: '0.5rem' }}
-                        onClick={() => {
-                          setOnboardingStep(0);
-                        }}
-                      >
-                        Show Direct Login Options
-                      </button>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 800 }}>What mobile device do you have?</div>
-                      <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        We will pair Watchlistr with a secure mobile signer app on your phone.
-                      </p>
-
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '0.5rem' }}>
-                        <button
-                          className="btn"
-                          style={{
-                            flexDirection: 'column',
-                            padding: '1.25rem',
-                            gap: '0.5rem',
-                            border: '2px solid var(--accent-color)',
-                            backgroundColor: 'var(--bg-secondary)',
-                            alignItems: 'center'
-                          }}
-                          onClick={() => {
-                            setOnboardingDesktopDevice('android');
-                            setOnboardingStep(2);
-                          }}
-                        >
-                          <Smartphone size={28} style={{ color: 'var(--accent-color)' }} />
-                          <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>Android Phone</span>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Recommended (Amber)</span>
-                        </button>
-
-                        <button
-                          className="btn"
-                          style={{
-                            flexDirection: 'column',
-                            padding: '1.25rem',
-                            gap: '0.5rem',
-                            border: '1px solid var(--border-color)',
-                            backgroundColor: 'var(--bg-secondary)',
-                            alignItems: 'center'
-                          }}
-                          onClick={() => {
-                            setOnboardingDesktopDevice('ios');
-                            setOnboardingStep(2);
-                          }}
-                        >
-                          <Smartphone size={28} style={{ color: 'var(--text-secondary)' }} />
-                          <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>iPhone / iPad</span>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Clave Signer</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* STEP 2: DOWNLOAD SIGNER APP INSTRUCTIONS */}
-              {onboardingStep === 2 && (() => {
-                const isIOS = detectDeviceType() === 'ios' || onboardingDesktopDevice === 'ios';
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.2rem', fontWeight: 800 }}>
-                        {isIOS ? 'Step 1: Install Clave Signer' : 'Step 1: Install Amber Signer'}
-                      </div>
-                      <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        {isIOS ? 'Install Clave from the App Store to manage your Nostr keys on iOS.' : 'Install Amber from GitHub Releases to manage your Nostr keys on Android.'}
-                      </p>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '0.75rem', backgroundColor: 'var(--bg-secondary)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', alignItems: 'center' }}>
-                      <Smartphone size={32} style={{ color: 'var(--accent-color)', flexShrink: 0 }} />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{isIOS ? 'Clave Signer for iOS' : 'Amber Signer for Android'}</div>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                          {isIOS ? 'Remote Signer for iPhone & iPad' : 'v2.1.2 • Open Source Nostr Signer'}
-                        </div>
-                      </div>
-                      <a
-                        href={isIOS ? 'itms-apps://search.itunes.apple.com/WebObjects/MZSearch.woa/wa/search?term=clave+nostr+signer' : 'https://github.com/greenart7c3/Amber/releases/latest'}
-                        onClick={(e) => {
-                          if (isIOS) {
-                            e.preventDefault();
-                            window.location.href = 'itms-apps://search.itunes.apple.com/WebObjects/MZSearch.woa/wa/search?term=clave+nostr+signer';
-                          }
-                        }}
-                        target={isIOS ? '_self' : '_blank'}
-                        rel="noreferrer"
-                        className="btn btn-primary btn-small"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', color: '#ffffff' }}
-                      >
-                        <Download size={14} /> {isIOS ? 'App Store' : 'Download APK'}
-                      </a>
-                    </div>
-
-                    <div style={{ backgroundColor: 'var(--bg-tertiary)', padding: '0.85rem', borderRadius: 'var(--radius-md)', fontSize: '0.85rem' }}>
-                      <strong style={{ display: 'block', marginBottom: '0.4rem' }}>Quick Steps:</strong>
-                      {isIOS ? (
-                        <ol style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
-                          <li>Install <strong>Clave – Nostr Signer</strong> from the Apple App Store.</li>
-                          <li>Open Clave and follow its quick setup steps to create your new Nostr identity (key pair).</li>
-                          <li>Once your identity is created in Clave, return here and click the button below.</li>
-                        </ol>
-                      ) : (
-                        <ol style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
-                          <li>Look under <strong>Assets</strong> at the bottom of the latest Amber release.</li>
-                          <li>
-                            Choose which <code>.apk</code> to download:
-                            <ul style={{ margin: '0.2rem 0', paddingLeft: '1rem', listStyleType: 'disc' }}>
-                              <li>Download <code>amber-arm64-v...apk</code> for modern Android phones.</li>
-                              <li>Or download <code>amber-fdroid-universal-v...apk</code> if you're not sure!</li>
-                            </ul>
-                          </li>
-                          <li>Install the APK and open Amber to create your new Nostr identity (key pair).</li>
-                          <li>Once your identity is created in Amber, return here and click the button below.</li>
-                        </ol>
-                      )}
-                    </div>
-
-                    <button
-                      className="btn btn-primary"
-                      style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', marginTop: '0.25rem', fontWeight: 700 }}
-                      onClick={() => {
-                        handleStartNostrConnect();
-                        setOnboardingStep(3);
-                      }}
-                    >
-                      I have my signer ready →
-                    </button>
-                  </div>
-                );
-              })()}
-
-              {/* STEP 3: NOSTR CONNECT PAIRING */}
-              {onboardingStep === 3 && (() => {
-                const isIOS = detectDeviceType() === 'ios' || onboardingDesktopDevice === 'ios';
-                const signerName = isIOS ? 'Clave' : 'Amber';
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center', alignItems: 'center' }}>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 800 }}>Connect Watchlistr to {signerName}</div>
-                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      Authorize Watchlistr to communicate with {signerName} via Nostr Connect (NIP-46).
-                    </p>
-
-                    {nostrConnectUri ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center', width: '100%' }}>
-                        {detectDeviceType() === 'android' || detectDeviceType() === 'ios' ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
-                            <a
-                              href={nostrConnectUri}
-                              className="btn btn-primary"
-                              style={{ width: '100%', padding: '0.85rem', justifyContent: 'center', textDecoration: 'none', color: '#ffffff', fontWeight: 700, fontSize: '1rem' }}
-                            >
-                              <Smartphone size={18} /> Open in {signerName} App
-                            </a>
-                            <button
-                              type="button"
-                              className="btn"
-                              onClick={() => {
-                                navigator.clipboard.writeText(nostrConnectUri);
-                                alert("Connection URI copied to clipboard!");
-                              }}
-                              style={{ width: '100%', justifyContent: 'center' }}
-                            >
-                              <Copy size={14} /> Copy Connection URI
-                            </button>
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', alignItems: 'center' }}>
-                            <div style={{ backgroundColor: '#ffffff', padding: '12px', borderRadius: 'var(--radius-md)', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
-                              <img
-                                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(nostrConnectUri)}`}
-                                alt="Nostr Connect QR Code"
-                                width={180}
-                                height={180}
-                                style={{ display: 'block' }}
-                              />
-                            </div>
-                            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                              Scan with {signerName} app to approve pairing
-                            </span>
-                            <button
-                              type="button"
-                              className="btn btn-small"
-                              onClick={() => {
-                                navigator.clipboard.writeText(nostrConnectUri);
-                                alert("Connection URI copied to clipboard!");
-                              }}
-                              style={{ marginTop: '0.25rem' }}
-                            >
-                              <Copy size={12} /> Copy Connection URI
-                            </button>
-                          </div>
-                        )}
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '0.5rem', color: 'var(--accent-color)', fontSize: '0.85rem', fontWeight: 600 }}>
-                          <RefreshCw size={16} className="spin" /> Waiting for connection authorization...
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={handleStartNostrConnect}
-                        style={{ width: '100%', justifyContent: 'center', padding: '0.75rem' }}
-                      >
-                        Generate Connection URI
-                      </button>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {/* STEP 4: BUILT-IN PROFILE SETUP */}
-              {onboardingStep === 4 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 800 }}>Connected! Set Up Your Profile 🎨</div>
-                    <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      Give yourself a display name and profile picture so your friends can discover your watchlists.
-                    </p>
-                  </div>
-
-                  <form onSubmit={async (e) => {
-                    await handlePublishProfile(e);
-                    setIsOnboardingOpen(false);
-                  }} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-
-                    {/* Crop & Dropzone */}
-                    <div
-                      onDragOver={(e) => { e.preventDefault(); setIsDraggingAvatar(true); }}
-                      onDragLeave={() => setIsDraggingAvatar(false)}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        setIsDraggingAvatar(false);
-                        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                          handleFileSelection(e.dataTransfer.files[0]);
-                        }
-                      }}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: '1rem',
-                        border: isDraggingAvatar ? '2px dashed var(--accent-color)' : '1px dashed var(--border-color)',
-                        backgroundColor: isDraggingAvatar ? 'var(--accent-color-light)' : 'var(--bg-secondary)',
-                        borderRadius: 'var(--radius-md)',
-                        gap: '0.75rem',
-                        textAlign: 'center'
-                      }}
-                    >
-                      {selectedImageFile ? (
-                        <div
-                          style={{
-                            width: '120px',
-                            height: '120px',
-                            borderRadius: '50%',
-                            overflow: 'hidden',
-                            position: 'relative',
-                            border: '3px solid var(--accent-color)',
-                            cursor: isDraggingPhoto ? 'grabbing' : 'grab',
-                            userSelect: 'none',
-                            touchAction: 'none'
-                          }}
-                          onMouseDown={(e) => {
-                            setIsDraggingPhoto(true);
-                            dragStartRef.current = { x: e.clientX - cropOffset.x, y: e.clientY - cropOffset.y };
-                          }}
-                          onMouseMove={(e) => {
-                            if (!isDraggingPhoto) return;
-                            setCropOffset({
-                              x: e.clientX - dragStartRef.current.x,
-                              y: e.clientY - dragStartRef.current.y
-                            });
-                          }}
-                          onMouseUp={() => setIsDraggingPhoto(false)}
-                          onMouseLeave={() => setIsDraggingPhoto(false)}
-                          onTouchStart={(e) => {
-                            if (e.touches[0]) {
-                              setIsDraggingPhoto(true);
-                              dragStartRef.current = { x: e.touches[0].clientX - cropOffset.x, y: e.touches[0].clientY - cropOffset.y };
-                            }
-                          }}
-                          onTouchMove={(e) => {
-                            if (isDraggingPhoto && e.touches[0]) {
-                              setCropOffset({
-                                x: e.touches[0].clientX - dragStartRef.current.x,
-                                y: e.touches[0].clientY - dragStartRef.current.y
-                              });
-                            }
-                          }}
-                          onTouchEnd={() => setIsDraggingPhoto(false)}
-                        >
-                          <img
-                            src={profileEditPicture}
-                            alt="Crop Preview"
-                            draggable={false}
-                            style={{
-                              position: 'absolute',
-                              left: '50%',
-                              top: '50%',
-                              transform: `translate(-50%, -50%) translate(${cropOffset.x}px, ${cropOffset.y}px) scale(${cropZoom})`,
-                              transformOrigin: 'center center',
-                              maxWidth: 'none',
-                              maxHeight: 'none',
-                              objectFit: 'contain'
-                            }}
-                          />
-                        </div>
-                      ) : (profileEditPicture || nostrUser?.picture) ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-                          <img
-                            src={profileEditPicture || nostrUser?.picture}
-                            alt="Profile Avatar"
-                            style={{
-                              width: '90px',
-                              height: '90px',
-                              borderRadius: '50%',
-                              objectFit: 'cover',
-                              border: '3px solid var(--accent-color)',
-                              boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
-                            }}
-                          />
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-                          <Upload size={24} style={{ color: 'var(--text-tertiary)' }} />
-                          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Drag & drop avatar photo here</span>
-                        </div>
-                      )}
-
-                      <label className="btn btn-secondary btn-small" style={{ cursor: 'pointer' }}>
-                        Browse Computer
-                        <input
-                          type="file"
-                          accept="image/*"
-                          style={{ display: 'none' }}
-                          onChange={(e) => {
-                            if (e.target.files && e.target.files[0]) {
-                              handleFileSelection(e.target.files[0]);
-                            }
-                          }}
-                        />
-                      </label>
-
-                      {selectedImageFile && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', maxWidth: '240px', marginTop: '0.25rem' }}>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Zoom:</span>
-                          <input
-                            type="range"
-                            min="1"
-                            max="3"
-                            step="0.05"
-                            value={cropZoom}
-                            onChange={(e) => setCropZoom(parseFloat(e.target.value))}
-                            style={{ flex: 1 }}
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Name Input */}
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Display Name</label>
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="e.g. MovieBuff99"
-                        value={profileEditName}
-                        onChange={(e) => setProfileEditName(e.target.value)}
-                        required
-                      />
-                    </div>
-
-                    {/* Avatar URL Fallback Input */}
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.4rem' }}>Avatar Image URL (Optional)</label>
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="https://example.com/avatar.jpg"
-                        value={selectedImageFile ? 'Local image selected above (Will auto-host on nostr.build)' : profileEditPicture}
-                        disabled={!!selectedImageFile}
-                        onChange={(e) => setProfileEditPicture(e.target.value)}
-                      />
-                    </div>
-
-                    {profileStatus && (
-                      <div style={{
-                        padding: '0.75rem',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: '0.85rem',
-                        backgroundColor: profileStatus.type === 'success' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                        color: profileStatus.type === 'success' ? '#22c55e' : '#ef4444',
-                        border: profileStatus.type === 'success' ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)'
-                      }}>
-                        {profileStatus.message}
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
-                      <button
-                        type="button"
-                        className="btn"
-                        style={{ flex: 1, justifyContent: 'center' }}
-                        onClick={() => setIsOnboardingOpen(false)}
-                      >
-                        Skip for Now
-                      </button>
-
-                      <button
-                        type="submit"
-                        className="btn btn-primary"
-                        disabled={isPublishingProfile}
-                        style={{ flex: 1, justifyContent: 'center', fontWeight: 700 }}
-                      >
-                        {isPublishingProfile ? (
-                          <>
-                            <RefreshCw size={16} className="spin" style={{ marginRight: '6px' }} />
-                            {publishingStep === 'uploading' ? 'Uploading Image...' : 'Publishing Profile...'}
-                          </>
-                        ) : (
-                          'Save Profile →'
-                        )}
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              )}
-
-            </div>
-
-            {/* Wizard Navigation Footer */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
-              {onboardingStep === 'expert' ? (
-                <button
-                  className="btn btn-small"
-                  onClick={() => setOnboardingStep(0)}
-                >
-                  ← Back to Setup Guide
-                </button>
-              ) : typeof onboardingStep === 'number' && onboardingStep > 0 ? (
-                <button
-                  className="btn btn-small"
-                  onClick={() => setOnboardingStep(prev => (typeof prev === 'number' && prev === 1 ? 0 : (prev as number) - 1))}
-                >
-                  ← Back
-                </button>
-              ) : (
-                <div></div>
-              )}
-
-              <button
-                className="btn btn-small"
-                onClick={() => setIsOnboardingOpen(false)}
-                style={{ color: 'var(--text-tertiary)' }}
-              >
-                {onboardingStep === 0 ? 'Close' : 'Cancel'}
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        relays={DEFAULT_RELAYS}
+        relayStatuses={relayStatuses}
+        blockedPubkeys={blockedPubkeys}
+        profiles={{ ...followedProfiles, ...exploreProfiles }}
+        onUnblockUser={handleUnblockUser}
+      />
+      {/* Guided Onboarding & Direct Login Modal */}
+      <OnboardingModal
+        isOpen={isOnboardingOpen}
+        onClose={() => setIsOnboardingOpen(false)}
+        onboardingStep={onboardingStep}
+        setOnboardingStep={setOnboardingStep}
+        onboardingDesktopDevice={onboardingDesktopDevice}
+        setOnboardingDesktopDevice={setOnboardingDesktopDevice}
+        directAuthTab={directAuthTab}
+        setDirectAuthTab={setDirectAuthTab}
+        bunkerConnectMode={bunkerConnectMode}
+        setBunkerConnectMode={setBunkerConnectMode}
+        bunkerInputUrl={bunkerInputUrl}
+        setBunkerInputUrl={setBunkerInputUrl}
+        bunkerConnecting={bunkerConnecting}
+        bunkerError={bunkerError}
+        setBunkerError={setBunkerError}
+        authChallengeUrl={authChallengeUrl}
+        readOnlyInputKey={readOnlyInputKey}
+        setReadOnlyInputKey={setReadOnlyInputKey}
+        nostrConnectUri={nostrConnectUri}
+        isNostrConnectListening={isNostrConnectListening}
+        hasNostrExtension={hasNostrExtension}
+        nostrUser={nostrUser}
+        handleStartNostrConnect={handleStartNostrConnect}
+        handleDirectBunkerManualLogin={handleDirectBunkerManualLogin}
+        handleDirectExtensionLogin={handleDirectExtensionLogin}
+        handleDirectReadOnlyLogin={handleDirectReadOnlyLogin}
+        profileEditName={profileEditName}
+        setProfileEditName={setProfileEditName}
+        profileEditPicture={profileEditPicture}
+        setProfileEditPicture={setProfileEditPicture}
+        selectedImageFile={selectedImageFile}
+        cropZoom={cropZoom}
+        setCropZoom={setCropZoom}
+        cropOffset={cropOffset}
+        setCropOffset={setCropOffset}
+        isDraggingPhoto={isDraggingPhoto}
+        setIsDraggingPhoto={setIsDraggingPhoto}
+        dragStartRef={dragStartRef}
+        isDraggingAvatar={isDraggingAvatar}
+        setIsDraggingAvatar={setIsDraggingAvatar}
+        handleFileSelection={handleFileSelection}
+        handlePublishProfile={handlePublishProfile}
+        profileStatus={profileStatus}
+        isPublishingProfile={isPublishingProfile}
+        publishingStep={publishingStep}
+      />
     </div>
   );
 }
