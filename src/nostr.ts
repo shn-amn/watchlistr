@@ -228,7 +228,7 @@ export function startNostrConnectSession(
     secret: secretHex,
     name: 'Watchlistr',
     url: appOrigin,
-    perms: ['get_public_key', 'sign_event:30016', 'sign_event:10016', 'sign_event:30007']
+    perms: ['get_public_key', 'sign_event:0', 'sign_event:5', 'sign_event:30016', 'sign_event:10016', 'sign_event:30007']
   });
 
   const uri = rawUri
@@ -490,8 +490,11 @@ export class NostrService {
     const subId = `sub_lists_${Math.random().toString(36).substring(2, 9)}`;
     const filter = {
       authors: [pubkey],
-      kinds: [30016]
+      kinds: [30016, 5]
     };
+
+    const deletedDTags: Map<string, number> = new Map();
+    const deletedEventIds: Set<string> = new Set();
 
     activeWebSockets.forEach(([url, ws]) => {
       const promise = new Promise<void>((resolve) => {
@@ -500,12 +503,48 @@ export class NostrService {
             const data = JSON.parse(e.data);
             if (data[0] === 'EVENT' && data[1] === subId) {
               const event = data[2] as NostrEvent;
-              const dTag = event.tags.find(t => t[0] === 'd')?.[1];
-              if (dTag) {
-                const existing = eventsMap.get(dTag);
-                // Keep the newer event (replaceable event rule)
-                if (!existing || event.created_at > existing.created_at) {
-                  eventsMap.set(dTag, event);
+
+              if (event.kind === 5) {
+                // NIP-09 deletion event
+                event.tags.forEach(t => {
+                  if (t[0] === 'a') {
+                    const parts = t[1]?.split(':');
+                    if (parts && parts[0] === '30016' && parts[2]) {
+                      const d = parts[2];
+                      deletedDTags.set(d, Math.max(deletedDTags.get(d) || 0, event.created_at));
+                      const existing = eventsMap.get(d);
+                      if (existing && existing.created_at <= event.created_at) {
+                        eventsMap.delete(d);
+                      }
+                    }
+                  } else if (t[0] === 'e' && t[1]) {
+                    deletedEventIds.add(t[1]);
+                    for (const [d, existing] of eventsMap.entries()) {
+                      if (existing.id === t[1]) {
+                        eventsMap.delete(d);
+                      }
+                    }
+                  } else if (t[0] === 'd' && t[1]) {
+                    deletedDTags.set(t[1], Math.max(deletedDTags.get(t[1]) || 0, event.created_at));
+                    const existing = eventsMap.get(t[1]);
+                    if (existing && existing.created_at <= event.created_at) {
+                      eventsMap.delete(t[1]);
+                    }
+                  }
+                });
+              } else if (event.kind === 30016) {
+                const dTag = event.tags.find(t => t[0] === 'd')?.[1];
+                const isTombstone = event.tags.some(t => t[0] === 'deleted' && t[1] === 'true');
+                if (dTag && !isTombstone) {
+                  const isDeletedById = Boolean(event.id && deletedEventIds.has(event.id));
+                  const isDeletedByDTag = (deletedDTags.get(dTag) || 0) >= event.created_at;
+                  if (!isDeletedById && !isDeletedByDTag) {
+                    const existing = eventsMap.get(dTag);
+                    // Keep the newer event (replaceable event rule)
+                    if (!existing || event.created_at > existing.created_at) {
+                      eventsMap.set(dTag, event);
+                    }
+                  }
                 }
               }
             } else if (data[0] === 'EOSE' && data[1] === subId) {
@@ -544,7 +583,15 @@ export class NostrService {
 
     // Wait for all relays to finish EOSE or timeout
     await Promise.all(promises);
-    return Array.from(eventsMap.values());
+
+    // Final filter to ensure no deleted or tombstoned events slip through
+    return Array.from(eventsMap.values()).filter(ev => {
+      if (ev.id && deletedEventIds.has(ev.id)) return false;
+      const d = ev.tags.find(t => t[0] === 'd')?.[1];
+      if (d && (deletedDTags.get(d) || 0) >= ev.created_at) return false;
+      if (ev.tags.some(t => t[0] === 'deleted' && t[1] === 'true')) return false;
+      return true;
+    });
   }
 
   // Fetch kind:0 metadata profile for a pubkey
@@ -862,10 +909,13 @@ export class NostrService {
             if (data[0] === 'EVENT' && data[1] === subId) {
               const event = data[2] as NostrEvent;
               const dTag = event.tags.find(t => t[0] === 'd')?.[1] || '';
-              const key = `${event.pubkey}:${dTag}`;
-              const existing = eventsMap.get(key);
-              if (!existing || event.created_at > existing.created_at) {
-                eventsMap.set(key, event);
+              const isTombstone = event.tags.some(t => t[0] === 'deleted' && t[1] === 'true');
+              if (dTag && !isTombstone) {
+                const key = `${event.pubkey}:${dTag}`;
+                const existing = eventsMap.get(key);
+                if (!existing || event.created_at > existing.created_at) {
+                  eventsMap.set(key, event);
+                }
               }
             } else if (data[0] === 'EOSE' && data[1] === subId) {
               cleanup();
@@ -951,10 +1001,13 @@ export class NostrService {
             if (data[0] === 'EVENT' && data[1] === subId) {
               const event = data[2] as NostrEvent;
               const dTag = event.tags.find(t => t[0] === 'd')?.[1] || '';
-              const key = `${event.pubkey}:${dTag}`;
-              const existing = eventsMap.get(key);
-              if (!existing || event.created_at > existing.created_at) {
-                eventsMap.set(key, event);
+              const isTombstone = event.tags.some(t => t[0] === 'deleted' && t[1] === 'true');
+              if (dTag && !isTombstone) {
+                const key = `${event.pubkey}:${dTag}`;
+                const existing = eventsMap.get(key);
+                if (!existing || event.created_at > existing.created_at) {
+                  eventsMap.set(key, event);
+                }
               }
             } else if (data[0] === 'EOSE' && data[1] === subId) {
               cleanup();

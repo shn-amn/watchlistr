@@ -21,6 +21,7 @@ export interface MediaList {
   type: 'watchlist' | 'watched';
   items: Media[];
   createdAt: number;
+  eventId?: string;
 }
 
 // Nostr identity model

@@ -31,16 +31,36 @@ export function useMediaLists({
   onSyncFollows,
   onSyncBlocks
 }: UseMediaListsProps) {
+  // Tombstone registry of deleted list IDs with deletion timestamp
+  const [deletedListIds, setDeletedListIds] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('watchlistr_deleted_lists');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
   // Lists states with LocalStorage persistence
   const [lists, setLists] = useState<MediaList[]>(() => {
     const savedLists = localStorage.getItem('watchlistr_lists');
+    const savedDeleted = localStorage.getItem('watchlistr_deleted_lists');
+    let localDeleted: Record<string, number> = {};
+    if (savedDeleted) {
+      try {
+        localDeleted = JSON.parse(savedDeleted);
+      } catch (e) {}
+    }
+
     if (savedLists) {
       try {
         const parsed: MediaList[] = JSON.parse(savedLists);
-        return parsed.map(l => ({
-          ...l,
-          title: cleanListTitle(l.title)
-        }));
+        return parsed
+          .filter(l => !(localDeleted[l.id] && (l.createdAt || 0) <= localDeleted[l.id]))
+          .map(l => ({
+            ...l,
+            title: cleanListTitle(l.title)
+          }));
       } catch (e) { }
     }
 
@@ -208,6 +228,7 @@ export function useMediaLists({
     try {
       const signedEvent = await activeSignerRef.current.signEvent(unsignedEvent);
       await nostrServiceRef.current.publishEvent(signedEvent);
+      setLists(prev => prev.map(l => l.id === list.id ? { ...l, eventId: signedEvent.id } : l));
     } catch (err) {
       console.error(`Failed to publish list ${list.id} to Nostr:`, err);
     }
@@ -218,13 +239,24 @@ export function useMediaLists({
     setIsSyncing(true);
 
     try {
-      // 1. Fetch own lists (kind:30016)
+      // 1. Fetch own lists (kind:30016 and kind:5 deletions)
       const events = await nostrServiceRef.current.fetchUserLists(pubkey);
       const remoteLists: MediaList[] = [];
 
       for (const event of events) {
         const dTag = event.tags.find(t => t[0] === 'd')?.[1];
         if (!dTag) continue;
+
+        // Skip if marked deleted locally
+        const deletedAt = deletedListIds[dTag];
+        if (deletedAt && event.created_at <= deletedAt) {
+          continue;
+        }
+
+        // Skip if marked as tombstone
+        if (event.tags.some(t => t[0] === 'deleted' && t[1] === 'true')) {
+          continue;
+        }
 
         const rawTitle = event.tags.find(t => t[0] === 'title')?.[1] || dTag;
         const title = cleanListTitle(rawTitle);
@@ -268,17 +300,24 @@ export function useMediaLists({
           description,
           type,
           items,
-          createdAt: event.created_at
+          createdAt: event.created_at,
+          eventId: event.id
         });
       }
 
       setLists(prev => {
         const merged = [...prev];
         remoteLists.forEach(remote => {
+          // Double check against deletedListIds
+          const deletedAt = deletedListIds[remote.id];
+          if (deletedAt && remote.createdAt <= deletedAt) {
+            return;
+          }
+
           const index = merged.findIndex(x => x.id === remote.id);
           if (index >= 0) {
             if (remote.createdAt > (merged[index].createdAt || 0) || merged[index].items.length === 0 || merged[index].createdAt === 0) {
-              merged[index] = remote;
+              merged[index] = { ...remote, eventId: remote.eventId || merged[index].eventId };
             }
           } else {
             merged.push(remote);
@@ -398,22 +437,47 @@ export function useMediaLists({
     setEditListModal({ isOpen: false, list: null });
   };
 
-  const deleteListFromNostr = async (listId: string) => {
+  const deleteListFromNostr = async (list: MediaList) => {
     if (!nostrUser || nostrUser.readOnly || !nostrServiceRef.current || !activeSignerRef.current) return;
     try {
-      const unsignedEvent = {
+      const tags: string[][] = [
+        ["a", `30016:${nostrUser.pubkey}:${list.id}`],
+        ["d", list.id]
+      ];
+      if (list.eventId) {
+        tags.push(["e", list.eventId]);
+      }
+
+      // 1. NIP-09 event deletion (kind:5)
+      const unsignedKind5 = {
         created_at: Math.floor(Date.now() / 1000),
         kind: 5,
-        tags: [
-          ["a", `30016:${nostrUser.pubkey}:${listId}`],
-          ["d", listId]
-        ],
-        content: `Deleted list ${listId}`
+        tags,
+        content: `Deleted list ${list.title || list.id}`
       };
-      const signedEvent = await activeSignerRef.current.signEvent(unsignedEvent);
-      await nostrServiceRef.current.publishEvent(signedEvent);
+      const signedKind5 = await activeSignerRef.current.signEvent(unsignedKind5);
+      await nostrServiceRef.current.publishEvent(signedKind5);
+
+      // 2. Also publish a tombstone parameterized replaceable event (kind:30016 with deleted: true)
+      // This ensures relays that don't purge on kind:5 will overwrite the old event data
+      try {
+        const unsignedTombstone = {
+          created_at: Math.floor(Date.now() / 1000) + 1,
+          kind: 30016,
+          tags: [
+            ["d", list.id],
+            ["title", list.title || list.id],
+            ["deleted", "true"]
+          ],
+          content: ""
+        };
+        const signedTombstone = await activeSignerRef.current.signEvent(unsignedTombstone);
+        await nostrServiceRef.current.publishEvent(signedTombstone);
+      } catch (tombstoneErr) {
+        console.warn("Could not publish tombstone kind:30016:", tombstoneErr);
+      }
     } catch (err) {
-      console.error(`Failed to publish list deletion for ${listId}:`, err);
+      console.error(`Failed to publish list deletion for ${list.id}:`, err);
     }
   };
 
@@ -424,12 +488,45 @@ export function useMediaLists({
   const executeDeleteList = () => {
     if (!deleteListModal.list) return;
 
-    const targetId = deleteListModal.list.id;
-    setLists(prev => prev.filter(l => l.id !== targetId));
-    deleteListFromNostr(targetId);
+    const targetList = deleteListModal.list;
+    const targetId = targetList.id;
 
-    setDeleteListModal({ isOpen: false, list: null });
+    // 1. Remove from lists state immediately
+    setLists(prev => prev.filter(l => l.id !== targetId));
+
+    // 2. Record deletion in tombstone registry and persist
+    const now = Math.floor(Date.now() / 1000);
+    setDeletedListIds(prev => {
+      const updated = { ...prev, [targetId]: now };
+      try {
+        localStorage.setItem('watchlistr_deleted_lists', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+
+    // 3. Fallback active list pointers if deleted list was currently active
+    if (activeWatchlistId === targetId) {
+      setActiveWatchlistId('watchlist:default');
+    }
+    if (activeWatchedId === targetId) {
+      setActiveWatchedId('watched:default');
+    }
+
+    // 4. Reset URL hash navigation
+    if (window.location.hash.startsWith('#list-')) {
+      if (window.history.length > 1) {
+        window.history.back();
+      } else {
+        window.history.pushState(null, '', window.location.pathname + window.location.search);
+      }
+    }
     setSelectedListId(null);
+
+    // 5. Close modal
+    setDeleteListModal({ isOpen: false, list: null });
+
+    // 6. Broadcast deletion to Nostr relays
+    deleteListFromNostr(targetList);
   };
 
   const defaultWatchlistId = 'watchlist:default';

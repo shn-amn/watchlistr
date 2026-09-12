@@ -142,14 +142,16 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                     >
                       <Pencil size={13} /> <span className="btn-label">Edit</span>
                     </button>
-                    <button
-                      className="btn btn-action-icon btn-delete btn-small"
-                      onClick={() => onConfirmDeleteList(currentList)}
-                      title="Delete this list"
-                      style={{ padding: '3px 8px', fontSize: '0.75rem' }}
-                    >
-                      <Trash2 size={13} /> <span className="btn-label">Delete</span>
-                    </button>
+                    {!(currentList.id === 'watchlist:default' || currentList.id === 'watched:default' || currentList.id === 'watchlist' || currentList.id === 'watched') && (
+                      <button
+                        className="btn btn-action-icon btn-delete btn-small"
+                        onClick={() => onConfirmDeleteList(currentList)}
+                        title="Delete this list"
+                        style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+                      >
+                        <Trash2 size={13} /> <span className="btn-label">Delete</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
