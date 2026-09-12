@@ -1,21 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  Plus,
-  Check,
-  Trash2,
-  Film,
-  Tv,
-  Pencil,
-  RefreshCw,
-  Bookmark,
-  Users,
-  User,
-  UserPlus,
-  UserMinus,
-  Globe,
-  ChevronDown,
-  ArrowUpDown
-} from 'lucide-react';
+import { Bookmark } from 'lucide-react';
 import {
   NostrService,
   Nip07Signer,
@@ -38,8 +22,6 @@ import type {
   Media,
   MediaList,
   NostrUser,
-  MediaTypeFilter,
-  MediaSortOrder,
   LogModalState,
   DetailsModalState,
   NewListModalState,
@@ -52,12 +34,9 @@ import {
 } from './constants';
 import {
   getApiUrl,
-  getMonthName,
   cleanListTitle,
   renderListTitle,
-  getRatingEmoji,
-  renderDirectorCreator,
-  sortWatchedItemsByDefaultScore
+  renderDirectorCreator
 } from './utils';
 import {
   DeleteListModal,
@@ -73,10 +52,12 @@ import {
   SearchModal
 } from './components/modals';
 import {
-  FloatingAddButton,
-  HeaderBar,
-  ListCardPosterStrip
+  FloatingAddButton
 } from './components/common';
+import {
+  HubView,
+  WorkspaceView
+} from './views';
 
 
 
@@ -184,32 +165,6 @@ function App() {
 
   const activeWatched = lists.find(x => x.id === activeWatchedId) || { items: [] };
   const watchedList = activeWatched.items;
-
-  // Media type filter for current workspace list ('movie', 'tv', or null for all)
-  const [mediaTypeFilter, setMediaTypeFilter] = useState<MediaTypeFilter>(null);
-  // Media sort order for watched lists ('recent', 'oldest', 'rating', 'lowest', or null for default)
-  const [mediaSortOrder, setMediaSortOrder] = useState<MediaSortOrder>(null);
-  const [isSortModalOpen, setIsSortModalOpen] = useState<boolean>(false);
-  const sortMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // Close sort popover when clicking outside
-  useEffect(() => {
-    if (!isSortModalOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (sortMenuRef.current && !sortMenuRef.current.contains(e.target as Node)) {
-        setIsSortModalOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isSortModalOpen]);
-
-  // Reset media type filter and sort order whenever opening or switching between lists
-  useEffect(() => {
-    setMediaTypeFilter(null);
-    setMediaSortOrder(null);
-    setIsSortModalOpen(false);
-  }, [selectedListId]);
 
   // Social & Follows & Explore state
   const [activeHubTab, setActiveHubTab] = useState<'my-lists' | 'explore' | 'following'>('explore');
@@ -1779,708 +1734,63 @@ function App() {
   return (
     <div className="app-container">
       {!selectedListId ? (
-        /* DASHBOARD HUB (Accessible to all: Guests & Authenticated Users) */
-        <div className="hub-layout">
-          {/* Top User Profile / Log In Header */}
-          <HeaderBar
-            nostrUser={nostrUser}
-            isSyncing={isSyncing}
-            onOpenSettings={() => setIsSettingsModalOpen(true)}
-            onOpenConnection={() => setIsConnectionModalOpen(true)}
-            onOpenLogin={() => {
-              setOnboardingStep(0);
-              setIsOnboardingOpen(true);
-            }}
-          />
-
-          {/* Hub Navigation Tabs */}
-          <div className="hub-tabs">
-            <button
-              className={`hub-tab ${activeHubTab === 'my-lists' ? 'active' : ''}`}
-              onClick={() => {
-                if (!nostrUser) {
-                  setOnboardingStep(0);
-                  setIsOnboardingOpen(true);
-                } else {
-                  setActiveHubTab('my-lists');
-                }
-              }}
-              title="My Lists"
-            >
-              <User size={16} /> <span className="tab-label">My Lists {nostrUser ? `(${lists.length})` : ''}</span>
-            </button>
-            <button
-              className={`hub-tab ${activeHubTab === 'explore' ? 'active' : ''}`}
-              onClick={() => {
-                setActiveHubTab('explore');
-                if (exploreLists.length === 0 && !isExploreLoading) {
-                  loadExploreData(true);
-                }
-              }}
-              title="Explore"
-            >
-              <Globe size={16} /> <span className="tab-label">Explore</span>
-            </button>
-            <button
-              className={`hub-tab ${activeHubTab === 'following' ? 'active' : ''}`}
-              onClick={() => {
-                if (!nostrUser) {
-                  setOnboardingStep(0);
-                  setIsOnboardingOpen(true);
-                } else {
-                  setActiveHubTab('following');
-                }
-              }}
-              title="Following"
-            >
-              <Users size={16} /> <span className="tab-label">Following {nostrUser ? `(${followedPubkeys.length})` : ''}</span>
-            </button>
-          </div>
-
-          {activeHubTab === 'explore' ? (
-            <>
-              {/* Explore Feed Section */}
-              <div className="hub-title-row">
-                <div>
-                  <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>Explore Public Watchlists</h2>
-                  <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    Discover recently published media lists (<code>kind:30016</code>) from across the Nostr network in real-time.
-                  </p>
-                </div>
-                <button
-                  className="btn btn-responsive"
-                  onClick={() => loadExploreData(true)}
-                  disabled={isExploreLoading}
-                  title="Refresh Explore Feed"
-                >
-                  <RefreshCw size={16} className={isExploreLoading ? 'spin' : ''} /> <span className="btn-label">{isExploreLoading ? 'Refreshing...' : 'Refresh Feed'}</span>
-                </button>
-              </div>
-
-              {isExploreLoading && exploreLists.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
-                  <RefreshCw size={28} className="spin" style={{ marginBottom: '0.5rem', color: 'var(--accent-color)' }} />
-                  <div>Querying relays for public <code>kind:30016</code> watchlists...</div>
-                </div>
-              ) : exploreLists.length === 0 ? (
-                <div className="empty-state" style={{ padding: '3rem 1.5rem', textAlign: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)' }}>
-                  <Globe size={36} style={{ color: 'var(--accent-color)', marginBottom: '0.75rem' }} />
-                  <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem' }}>No public lists found</h3>
-                  <p style={{ margin: '0 0 1.25rem 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                    No recent <code>kind:30016</code> events were returned from connected relays.
-                  </p>
-                  <button className="btn btn-primary" onClick={() => loadExploreData(true)}>
-                    <RefreshCw size={16} /> Try Refreshing
-                  </button>
-                </div>
-              ) : (
-                <div className="following-feed">
-                  <div className="lists-grid">
-                    {exploreLists.filter(list => !blockedPubkeys.includes(list.id.split(':')[1] || '')).map(list => {
-                      const pubkey = list.id.split(':')[1] || '';
-                      const profile = followedProfiles[pubkey] || exploreProfiles[pubkey];
-                      const displayName = profile?.name || (pubkey ? `${pubkey.substring(0, 8)}...${pubkey.substring(pubkey.length - 4)}` : 'Anonymous');
-
-                      return (
-                        <div key={list.id} className="list-card" onClick={() => openWatchlist(list.id)}>
-                          <div className="list-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div
-                              className="profile-badge clickable"
-                              style={{ fontSize: '0.8rem', cursor: 'pointer' }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setAuthorProfileModal({ isOpen: true, pubkey });
-                              }}
-                              title={`View ${displayName}'s profile`}
-                            >
-                              {profile?.picture ? (
-                                <img src={profile.picture} alt={displayName} className="profile-avatar" style={{ width: '22px', height: '22px' }} />
-                              ) : (
-                                <div className="profile-avatar-fallback" style={{ width: '22px', height: '22px', fontSize: '0.75rem' }}>{displayName.substring(0, 1).toUpperCase()}</div>
-                              )}
-                              <span className="profile-name" style={{ fontWeight: 600, fontSize: '0.85rem' }}>{displayName}</span>
-                            </div>
-                          </div>
-
-                          <h3 className="list-card-title" style={{ marginTop: '0.5rem' }}>{renderListTitle(list)}</h3>
-                          <p className="list-card-desc">{list.description || 'No description provided.'}</p>
-
-                          <div className="list-card-footer">
-                            <ListCardPosterStrip list={list} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Sentinel element for infinite scroll */}
-                  <div ref={exploreObserverRef} style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '1.5rem' }}>
-                    {isExploreLoadingMore && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                        <RefreshCw size={18} className="spin" style={{ color: 'var(--accent-color)' }} />
-                        <span>Loading older watchlists...</span>
-                      </div>
-                    )}
-                    {!hasMoreExplore && exploreLists.length > 0 && (
-                      <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
-                        Reached end of recent public watchlists.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </>
-          ) : activeHubTab === 'my-lists' ? (
-            <>
-              {/* List Hub Section */}
-              <div className="hub-title-row">
-                <div>
-                  <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>My Media Lists</h2>
-                  <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    Select a list to view, edit, or add movies & TV shows.
-                  </p>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0 }}>
-                  {nostrUser && (
-                    <button
-                      className="btn btn-responsive"
-                      onClick={() => syncFromNostr(nostrUser.pubkey)}
-                      disabled={isSyncing}
-                      title="Re-sync lists from Nostr relays"
-                    >
-                      <RefreshCw size={16} className={isSyncing ? 'spin' : ''} /> <span className="btn-label">{isSyncing ? 'Syncing...' : 'Sync Relays'}</span>
-                    </button>
-                  )}
-                  <button
-                    className="btn btn-primary btn-responsive"
-                    onClick={() => setNewListModal({ isOpen: true, type: 'watched' })}
-                    title="New List"
-                  >
-                    <Plus size={16} /> <span className="btn-label">New List</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Grid of List Cards */}
-              <div className="lists-grid">
-                {lists.map(list => (
-                  <div
-                    key={list.id}
-                    className="list-card"
-                    onClick={() => openWatchlist(list.id)}
-                  >
-                    <h3 className="list-card-title" style={{ marginTop: '0.25rem' }}>{renderListTitle(list)}</h3>
-                    <p className="list-card-desc">{list.description || 'No description provided.'}</p>
-
-                    <div className="list-card-footer">
-                      <ListCardPosterStrip list={list} />
-                    </div>
-                  </div>
-                ))}
-
-                <div
-                  className="list-card list-card-create"
-                  onClick={() => setNewListModal({ isOpen: true, type: 'watched' })}
-                >
-                  <Plus size={24} style={{ color: 'var(--accent-color)', marginBottom: '0.5rem' }} />
-                  <div style={{ fontWeight: 700, fontSize: '1rem' }}>Create New List</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
-                    Publish custom <code>kind:30016</code> logs
-                  </div>
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              {/* Following Social Feed Tab */}
-              <div className="hub-title-row">
-                <div>
-                  <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>Following ({followedPubkeys.length})</h2>
-                  <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    Discover media lists (<code>kind:30016</code>) published by your Nostr contacts (<code>kind:10016</code>).
-                  </p>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <button
-                    className="btn btn-primary btn-responsive"
-                    onClick={() => setIsFollowModalOpen(true)}
-                    title="Follow Contact"
-                  >
-                    <UserPlus size={16} /> <span className="btn-label">Follow Contact</span>
-                  </button>
-                </div>
-              </div>
-
-              {followedPubkeys.length === 0 ? (
-                <div className="empty-state" style={{ padding: '3rem 1.5rem', textAlign: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)' }}>
-                  <Users size={36} style={{ color: 'var(--accent-color)', marginBottom: '0.75rem' }} />
-                  <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem' }}>You aren't following anyone yet</h3>
-                  <p style={{ margin: '0 0 1.25rem 0', color: 'var(--text-secondary)', fontSize: '0.9rem', maxWidth: '460px', marginLeft: 'auto', marginRight: 'auto' }}>
-                    Follow Nostr profiles by entering their <code>npub</code> key to view their public watchlists and watched review logs.
-                  </p>
-                  <button className="btn btn-primary" onClick={() => setIsFollowModalOpen(true)}>
-                    <UserPlus size={16} /> Follow a Nostr Contact
-                  </button>
-                </div>
-              ) : (
-                <div className="following-feed">
-                  {followedPubkeys.map(pk => {
-                    const profile = followedProfiles[pk];
-                    const userLists = followedListsMap[pk] || [];
-                    const displayName = profile?.name || `${pk.substring(0, 8)}...${pk.substring(pk.length - 4)}`;
-                    const isExpanded = Boolean(expandedFollowingUsers[pk]);
-
-                    return (
-                      <div key={pk} className="following-user-section">
-                        <div
-                          className={`following-user-header clickable ${isExpanded ? 'expanded' : ''}`}
-                          onClick={() => toggleFollowedUserExpand(pk)}
-                          title={isExpanded ? "Click to collapse watchlists" : "Click to expand watchlists"}
-                        >
-                          <div className="profile-badge">
-                            {profile?.picture ? (
-                              <img src={profile.picture} alt={displayName} className="profile-avatar" />
-                            ) : (
-                              <div className="profile-avatar-fallback">{displayName.substring(0, 1).toUpperCase()}</div>
-                            )}
-                            <div>
-                              <div className="profile-name">{displayName}</div>
-                              <div className="profile-npub" title={pk}>npub: {pk.substring(0, 10)}...{pk.substring(pk.length - 6)}</div>
-                            </div>
-                          </div>
-
-                          <button
-                            className="btn btn-action-icon btn-delete btn-responsive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleUnfollowUser(pk);
-                            }}
-                            title="Unfollow user"
-                          >
-                            <UserMinus size={16} /> <span className="btn-label">Unfollow</span>
-                          </button>
-                        </div>
-
-                        {isExpanded && (
-                          <div style={{ marginTop: '0.75rem' }}>
-                            {userLists.length === 0 ? (
-                              <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', padding: '0.5rem 0' }}>
-                                No public <code>kind:30016</code> lists found for this profile on connected relays.
-                              </div>
-                            ) : (
-                              <div className="lists-grid">
-                                {userLists.map(list => (
-                                  <div
-                                    key={list.id}
-                                    className="list-card"
-                                    onClick={() => openWatchlist(list.id)}
-                                  >
-                                    <h3 className="list-card-title" style={{ marginTop: '0.25rem' }}>{renderListTitle(list)}</h3>
-                                    <p className="list-card-desc">{list.description || 'No description provided.'}</p>
-
-                                    <div className="list-card-footer">
-                                      <ListCardPosterStrip list={list} />
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Nostr Relay Status Console Footer */}
-          {Object.keys(relayStatuses).length > 0 && (
-            <footer style={{ marginTop: '2rem', display: 'flex', justifyContent: 'center' }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                <span>Relays:</span>
-                {Object.entries(relayStatuses).map(([url, connected]) => (
-                  <span key={url} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: connected ? '#10b981' : '#ef4444' }}></span>
-                    {url.replace('wss://', '')}
-                  </span>
-                ))}
-              </div>
-            </footer>
-          )}
-        </div>
+        <HubView
+          nostrUser={nostrUser}
+          isSyncing={isSyncing}
+          onOpenSettings={() => setIsSettingsModalOpen(true)}
+          onOpenConnection={() => setIsConnectionModalOpen(true)}
+          onOpenLogin={() => {
+            setOnboardingStep(0);
+            setIsOnboardingOpen(true);
+          }}
+          activeHubTab={activeHubTab}
+          setActiveHubTab={setActiveHubTab}
+          lists={lists}
+          onOpenNewListModal={() => setNewListModal({ isOpen: true, type: 'watched' })}
+          onSyncFromNostr={syncFromNostr}
+          exploreLists={exploreLists}
+          exploreProfiles={exploreProfiles}
+          isExploreLoading={isExploreLoading}
+          isExploreLoadingMore={isExploreLoadingMore}
+          hasMoreExplore={hasMoreExplore}
+          exploreObserverRef={exploreObserverRef}
+          onRefreshExplore={loadExploreData}
+          blockedPubkeys={blockedPubkeys}
+          followedPubkeys={followedPubkeys}
+          followedProfiles={followedProfiles}
+          followedListsMap={followedListsMap}
+          expandedFollowingUsers={expandedFollowingUsers}
+          onToggleFollowedUserExpand={toggleFollowedUserExpand}
+          onOpenFollowModal={() => setIsFollowModalOpen(true)}
+          onUnfollowUser={handleUnfollowUser}
+          onOpenWatchlist={openWatchlist}
+          onOpenAuthorProfile={(pubkey) => setAuthorProfileModal({ isOpen: true, pubkey })}
+          relayStatuses={relayStatuses}
+        />
       ) : (
-        /* PAGE 2: SINGLE LIST FOCUSED WORKSPACE */
-        <div className="workspace-container">
-          {/* Top User Profile / Log In Header */}
-          <HeaderBar
-            nostrUser={nostrUser}
-            isSyncing={isSyncing}
-            onOpenSettings={() => setIsSettingsModalOpen(true)}
-            onOpenConnection={() => setIsConnectionModalOpen(true)}
-            onOpenLogin={() => {
-              setOnboardingStep(0);
-              setIsOnboardingOpen(true);
-            }}
-          />
-
-          {/* List Workspace Header */}
-          {currentList && (
-            <div className="workspace-header-card">
-              {isSocialList && socialProfile && (
-                <div
-                  className="social-author-banner clickable"
-                  onClick={() => socialProfile?.pubkey && setAuthorProfileModal({ isOpen: true, pubkey: socialProfile.pubkey })}
-                  title={`View ${socialProfile.name}'s profile`}
-                >
-                  <Globe size={16} color="var(--accent-color)" />
-                  <span>Viewing <strong>{socialProfile.name}</strong>'s public list (Read-Only)</span>
-                </div>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
-                    <h1 className="workspace-title" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                      <span
-                        className="breadcrumb-author"
-                        onClick={closeWatchlist}
-                        title="Click to go back to Lists"
-                      >
-                        {isSocialList
-                          ? (socialProfile?.name || (currentList.id.split(':')[1] ? `${currentList.id.split(':')[1].substring(0, 8)}...` : 'Guest'))
-                          : (nostrUser?.name || (nostrUser?.pubkey ? `${nostrUser.pubkey.substring(0, 8)}...` : 'my'))}
-                      </span>
-                      <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>/</span>
-                      <span>{renderListTitle(currentList)}</span>
-                    </h1>
-
-                    {!isSocialList && (!nostrUser || !nostrUser.readOnly) && (
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginLeft: '4px' }}>
-                        <button
-                          className="btn btn-action-icon btn-small"
-                          onClick={() => openEditListModal(currentList)}
-                          title="Edit list title and description"
-                          style={{ padding: '3px 8px', fontSize: '0.75rem' }}
-                        >
-                          <Pencil size={13} /> <span className="btn-label">Edit</span>
-                        </button>
-                        <button
-                          className="btn btn-action-icon btn-delete btn-small"
-                          onClick={() => confirmDeleteList(currentList)}
-                          title="Delete this list"
-                          style={{ padding: '3px 8px', fontSize: '0.75rem' }}
-                        >
-                          <Trash2 size={13} /> <span className="btn-label">Delete</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <p className="workspace-desc">{currentList.description || 'No description provided.'}</p>
-                </div>
-                <div className="workspace-stats" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-                  {!isSocialList && (!nostrUser || !nostrUser.readOnly) && (
-                    <button className="btn btn-primary btn-responsive" onClick={() => setIsSearchDrawerOpen(true)} title="Find & Add">
-                      <Plus size={16} /> <span className="btn-label">Find & Add</span>
-                    </button>
-                  )}
-                  <span className="workspace-item-count">{currentList.items.length} Items</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Media Items List */}
-          <div className="workspace-content">
-            {!currentList || currentList.items.length === 0 ? (
-              <div className="empty-state">
-                <Film size={48} className="empty-state-icon" />
-                <h3 className="empty-state-title">This list is currently empty</h3>
-                {!isSocialList && (!nostrUser || !nostrUser.readOnly) ? (
-                  <>
-                    <p className="empty-state-text">
-                      Use the <strong>Find & Add</strong> button to find movies or TV shows on TheTVDB and add them to <strong>{currentList ? renderListTitle(currentList) : 'this list'}</strong>.
-                    </p>
-                    <button className="btn btn-primary btn-responsive" onClick={() => setIsSearchDrawerOpen(true)} title="Find & Add">
-                      <Plus size={16} /> <span className="btn-label">Find & Add</span>
-                    </button>
-                  </>
-                ) : (
-                  <p className="empty-state-text">
-                    No items have been added to this list yet.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div>
-                {/* Media Filter & Sort Toolbar */}
-                {(() => {
-                  const movieCount = currentList.items.filter(x => x.type === 'movie').length;
-                  const tvCount = currentList.items.filter(x => x.type === 'tv').length;
-                  
-                  // 1. Filter by Type
-                  let processedItems = currentList.items.filter(item => {
-                    if (mediaTypeFilter === 'movie') return item.type === 'movie';
-                    if (mediaTypeFilter === 'tv') return item.type === 'tv';
-                    return true;
-                  });
-
-                  // 2. Sort by selected order
-                  if (currentList.type === 'watched' && !mediaSortOrder) {
-                    processedItems = sortWatchedItemsByDefaultScore(processedItems);
-                  } else if (mediaSortOrder === 'recent') {
-                    processedItems = [...processedItems].sort((a, b) => {
-                      const dateA = a.watchedDate || '';
-                      const dateB = b.watchedDate || '';
-                      if (dateA && dateB) return dateB.localeCompare(dateA);
-                      if (dateA && !dateB) return -1;
-                      if (!dateA && dateB) return 1;
-
-                      const yearA = parseInt(a.year, 10) || 0;
-                      const yearB = parseInt(b.year, 10) || 0;
-                      return yearB - yearA;
-                    });
-                  } else if (mediaSortOrder === 'oldest') {
-                    processedItems = [...processedItems].sort((a, b) => {
-                      const dateA = a.watchedDate || '';
-                      const dateB = b.watchedDate || '';
-                      if (dateA && dateB) return dateA.localeCompare(dateB);
-                      if (dateA && !dateB) return -1;
-                      if (!dateA && dateB) return 1;
-
-                      const yearA = parseInt(a.year, 10) || 0;
-                      const yearB = parseInt(b.year, 10) || 0;
-                      return yearA - yearB;
-                    });
-                  } else if (mediaSortOrder === 'rating') {
-                    processedItems = [...processedItems].sort((a, b) => {
-                      const ratingA = a.userRating !== undefined ? a.userRating : -1;
-                      const ratingB = b.userRating !== undefined ? b.userRating : -1;
-                      return ratingB - ratingA;
-                    });
-                  } else if (mediaSortOrder === 'lowest') {
-                    processedItems = [...processedItems].sort((a, b) => {
-                      const ratingA = a.userRating !== undefined ? a.userRating : 999;
-                      const ratingB = b.userRating !== undefined ? b.userRating : 999;
-                      return ratingA - ratingB;
-                    });
-                  }
-
-                  return (
-                    <>
-                      <div className="media-toolbar-row">
-                        {/* Left: Type Filter Chips */}
-                        <div className="filter-chips-group">
-                          <button
-                            type="button"
-                            className={`chip-pill ${mediaTypeFilter === 'movie' ? 'active' : ''}`}
-                            onClick={() => setMediaTypeFilter(prev => prev === 'movie' ? null : 'movie')}
-                            title="Filter by movies"
-                          >
-                            <Film size={13} />
-                            <span>Movies</span>
-                            <span className="chip-count">{movieCount}</span>
-                          </button>
-                          <button
-                            type="button"
-                            className={`chip-pill ${mediaTypeFilter === 'tv' ? 'active' : ''}`}
-                            onClick={() => setMediaTypeFilter(prev => prev === 'tv' ? null : 'tv')}
-                            title="Filter by TV shows"
-                          >
-                            <Tv size={13} />
-                            <span className="chip-label-full">TV Shows</span>
-                            <span className="chip-label-short">TV</span>
-                            <span className="chip-count">{tvCount}</span>
-                          </button>
-                        </div>
-
-                        {/* Right: Ultra-Compact Dynamic Sort Popover Button (Watched List Only) */}
-                        {currentList.type === 'watched' && (
-                          <div className="sort-menu-container" ref={sortMenuRef}>
-                            <button
-                              type="button"
-                              className={`sort-dropdown-wrapper ${mediaSortOrder ? 'active' : ''}`}
-                              onClick={() => setIsSortModalOpen(prev => !prev)}
-                              title="Sort watched list"
-                            >
-                              {!mediaSortOrder && <ArrowUpDown size={12} className="sort-icon" />}
-                              <span className="sort-label">
-                                {mediaSortOrder === 'recent'
-                                  ? 'Newest'
-                                  : mediaSortOrder === 'oldest'
-                                    ? 'Oldest'
-                                    : mediaSortOrder === 'rating'
-                                      ? 'Highest'
-                                      : mediaSortOrder === 'lowest'
-                                        ? 'Lowest'
-                                        : 'Default'}
-                              </span>
-                              <ChevronDown size={11} className="sort-chevron" />
-                            </button>
-
-                            {isSortModalOpen && (
-                              <div className="sort-popover-backdrop" onClick={() => setIsSortModalOpen(false)}>
-                                <div className="sort-popover-menu" onClick={(e) => e.stopPropagation()}>
-                                  <div className="filter-section">
-                                    <div className="sort-popover-list">
-                                      {[
-                                        { value: null, label: 'Default' },
-                                        { value: 'recent', label: 'Newest First' },
-                                        { value: 'oldest', label: 'Oldest First' },
-                                        { value: 'rating', label: 'Highest Rated' },
-                                        { value: 'lowest', label: 'Lowest Rated' }
-                                      ].map((opt) => {
-                                        const isSelected = mediaSortOrder === opt.value;
-                                        return (
-                                          <button
-                                            key={opt.label}
-                                            type="button"
-                                            className={`sort-option-item ${isSelected ? 'active' : ''}`}
-                                            onClick={() => {
-                                              setMediaSortOrder(opt.value as any);
-                                              setIsSortModalOpen(false);
-                                            }}
-                                          >
-                                            <span>{opt.label}</span>
-                                            {isSelected && <Check size={13} className="sort-option-check" />}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {processedItems.length === 0 ? (
-                        <div className="empty-state" style={{ padding: '2.5rem 1rem', textAlign: 'center' }}>
-                          {mediaTypeFilter === 'movie' ? <Film size={36} style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }} /> : <Tv size={36} style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }} />}
-                          <h4 style={{ margin: '0 0 0.25rem 0', fontSize: '1.05rem', fontWeight: 700 }}>
-                            No {mediaTypeFilter === 'movie' ? 'movies' : 'TV shows'} in this list
-                          </h4>
-                          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                            This list does not currently have any {mediaTypeFilter === 'movie' ? 'movies' : 'TV shows'}.
-                          </p>
-                          <button className="btn btn-small" onClick={() => setMediaTypeFilter(null)}>
-                            Show All Items ({currentList.items.length})
-                          </button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                          {processedItems.map(item => (
-                            <div key={item.id} className="media-card" style={{ display: 'flex', alignItems: 'center', padding: '0.85rem 1rem' }}>
-                              <div
-                                className="poster-container"
-                                style={{ cursor: 'pointer' }}
-                                onClick={() => openDetailsModal(item)}
-                              >
-                                {item.poster ? (
-                                  <img src={item.poster} alt={item.title} className="poster-img" />
-                                ) : (
-                                  <div className="media-placeholder-icon">
-                                    {item.type === 'movie' ? <Film size={24} /> : <Tv size={24} />}
-                                  </div>
-                                )}
-                              </div>
-
-                              <div className="media-info" style={{ flex: 1, minWidth: 0, paddingLeft: '1rem', overflow: 'hidden' }}>
-                                <div className="media-header">
-                                  <span
-                                    className="media-title clickable"
-                                    onClick={() => openDetailsModal(item)}
-                                    title={item.title}
-                                  >
-                                    {item.title}
-                                  </span>
-                                  <span className={`media-type-badge ${item.type}`}>
-                                    {item.type === 'movie' ? <Film size={11} /> : <Tv size={11} />}
-                                    <span>{item.type === 'movie' ? 'Movie' : 'TV'}</span>
-                                  </span>
-                                </div>
-
-                      {renderDirectorCreator(item)}
-
-                      {currentList.type === 'watched' && (item.userRating !== undefined || item.watchedDate) && (
-                        <div className="user-log-details" style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          {item.userRating !== undefined && (
-                            <div
-                              style={{ fontSize: '1.3rem', lineHeight: '1', cursor: 'default' }}
-                              title={`Rated ${item.userRating}/10`}
-                            >
-                              {getRatingEmoji(item.userRating)}
-                            </div>
-                          )}
-                          {item.watchedDate && (
-                            <span className="media-year" style={{ fontSize: '0.8rem' }}>
-                              Watched {item.watchedDate.split('-').length === 3
-                                ? `${getMonthName(item.watchedDate.split('-')[1])} ${parseInt(item.watchedDate.split('-')[2], 10)}, ${item.watchedDate.split('-')[0]}`
-                                : item.watchedDate.split('-').length === 2
-                                  ? `${getMonthName(item.watchedDate.split('-')[1])} ${item.watchedDate.split('-')[0]}`
-                                  : item.watchedDate
-                              }
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="media-actions" style={{ flexShrink: 0, display: 'flex', flexDirection: currentList.type === 'watched' ? 'column' : 'row', alignItems: 'center', gap: '4px' }}>
-                      {!isSocialList && currentList.type === 'watchlist' ? (
-                        <>
-                          <button
-                            className="btn btn-primary btn-responsive"
-                            onClick={() => openLogWatchedModal(item, 'watchlist', currentList.id)}
-                            title="Mark as watched"
-                          >
-                            <Check size={14} /> <span className="btn-label">Watched</span>
-                          </button>
-                          <button
-                            className="btn btn-action-icon btn-delete"
-                            onClick={() => removeFromWatchlist(item.id, currentList.id)}
-                            title="Remove from list"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </>
-                      ) : !isSocialList && currentList.type === 'watched' ? (
-                        <>
-                          <button
-                            className="btn btn-action-icon btn-delete"
-                            onClick={() => removeFromWatched(item.id, currentList.id)}
-                            title="Remove from watched log"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                          <button
-                            className="btn btn-action-icon"
-                            onClick={() => openLogWatchedModal(item, 'edit', currentList.id)}
-                            title="Edit details"
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          {renderWatchlistRibbon(item)}
-                        </>
-                      ) : (
-                        <>
-                          {renderWatchlistRibbon(item)}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-                    </>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
-        </div>
+        <WorkspaceView
+          nostrUser={nostrUser}
+          isSyncing={isSyncing}
+          onOpenSettings={() => setIsSettingsModalOpen(true)}
+          onOpenConnection={() => setIsConnectionModalOpen(true)}
+          onOpenLogin={() => {
+            setOnboardingStep(0);
+            setIsOnboardingOpen(true);
+          }}
+          currentList={currentList}
+          isSocialList={isSocialList}
+          socialProfile={socialProfile}
+          onCloseWatchlist={closeWatchlist}
+          onOpenEditListModal={openEditListModal}
+          onConfirmDeleteList={confirmDeleteList}
+          onOpenSearchDrawer={() => setIsSearchDrawerOpen(true)}
+          onOpenAuthorProfile={(pubkey) => setAuthorProfileModal({ isOpen: true, pubkey })}
+          onOpenDetailsModal={openDetailsModal}
+          onOpenLogWatchedModal={openLogWatchedModal}
+          onRemoveFromWatchlist={removeFromWatchlist}
+          onRemoveFromWatched={removeFromWatched}
+          renderWatchlistRibbon={renderWatchlistRibbon}
+        />
       )}
 
       {/* Global Search Modal Popup (Find & Add) */}
