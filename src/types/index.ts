@@ -41,6 +41,21 @@ export type MediaTypeFilter = 'movie' | 'tv' | null;
 export type MediaSortOrder = 'recent' | 'oldest' | 'rating' | 'lowest' | null;
 export type DeviceType = 'android' | 'ios' | 'desktop';
 
+export interface WatchedDateFilter {
+  year: string;
+  month: string;
+  day: string;
+}
+
+export interface WatchedFiltersState {
+  showMovies: boolean;
+  showTv: boolean;
+  from: WatchedDateFilter;
+  to: WatchedDateFilter;
+  minRating: number;
+  maxRating: number;
+}
+
 export interface RatingEmojiInfo {
   emoji: string;
   label: string;

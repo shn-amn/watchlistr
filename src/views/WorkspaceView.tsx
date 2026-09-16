@@ -8,17 +8,32 @@ import {
   Tv,
   ArrowUpDown,
   ChevronDown,
-  Check
+  Check,
+  Filter
 } from 'lucide-react';
-import type { Media, MediaList, NostrUser, MediaTypeFilter, MediaSortOrder } from '../types';
+import type {
+  Media,
+  MediaList,
+  NostrUser,
+  MediaTypeFilter,
+  MediaSortOrder,
+  WatchedFiltersState
+} from '../types';
 import {
   renderListTitle,
   renderDirectorCreator,
   getMonthName,
   getRatingEmoji,
-  sortWatchedItemsByDefaultScore
+  sortWatchedItemsByDefaultScore,
+  DEFAULT_WATCHED_FILTERS,
+  matchesDateRange,
+  matchesRatingRange,
+  matchesType,
+  isWatchedFilterActive,
+  getActiveFilterCount
 } from '../utils';
 import { HeaderBar } from '../components/common';
+import { WatchedFilterModal } from '../components/modals';
 
 export interface WorkspaceViewProps {
   // Top Header Bar
@@ -67,6 +82,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   renderWatchlistRibbon
 }) => {
   const [mediaTypeFilter, setMediaTypeFilter] = useState<MediaTypeFilter>(null);
+  const [watchedFilters, setWatchedFilters] = useState<WatchedFiltersState>(DEFAULT_WATCHED_FILTERS);
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState<boolean>(false);
+  const filterMenuRef = useRef<HTMLDivElement | null>(null);
+
   const [mediaSortOrder, setMediaSortOrder] = useState<MediaSortOrder>(null);
   const [isSortModalOpen, setIsSortModalOpen] = useState<boolean>(false);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
@@ -74,8 +93,10 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   // Reset filters and sort when switching lists
   useEffect(() => {
     setMediaTypeFilter(null);
+    setWatchedFilters(DEFAULT_WATCHED_FILTERS);
     setMediaSortOrder(null);
     setIsSortModalOpen(false);
+    setIsFilterModalOpen(false);
   }, [currentList?.id]);
 
   // Click outside to close sort popover menu
@@ -89,6 +110,18 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isSortModalOpen]);
+
+  // Click outside to close filter popover menu
+  useEffect(() => {
+    if (!isFilterModalOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (filterMenuRef.current && !filterMenuRef.current.contains(e.target as Node)) {
+        setIsFilterModalOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isFilterModalOpen]);
 
   return (
     <div className="workspace-container">
@@ -197,11 +230,27 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               const movieCount = currentList.items.filter(x => x.type === 'movie').length;
               const tvCount = currentList.items.filter(x => x.type === 'tv').length;
 
-              // 1. Filter by Type
+              // 1. Filter by criteria
               let processedItems = currentList.items.filter(item => {
-                if (mediaTypeFilter === 'movie') return item.type === 'movie';
-                if (mediaTypeFilter === 'tv') return item.type === 'tv';
-                return true;
+                if (currentList.type === 'watched') {
+                  if (!matchesType(item.type, watchedFilters.showMovies, watchedFilters.showTv)) {
+                    return false;
+                  }
+
+                  if (!matchesDateRange(item.watchedDate, watchedFilters.from, watchedFilters.to)) {
+                    return false;
+                  }
+
+                  if (!matchesRatingRange(item.userRating, watchedFilters.minRating, watchedFilters.maxRating)) {
+                    return false;
+                  }
+
+                  return true;
+                } else {
+                  if (mediaTypeFilter === 'movie') return item.type === 'movie';
+                  if (mediaTypeFilter === 'tv') return item.type === 'tv';
+                  return true;
+                }
               });
 
               // 2. Sort by selected order
@@ -248,30 +297,61 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               return (
                 <>
                   <div className="media-toolbar-row">
-                    {/* Left: Type Filter Chips */}
-                    <div className="filter-chips-group">
-                      <button
-                        type="button"
-                        className={`chip-pill ${mediaTypeFilter === 'movie' ? 'active' : ''}`}
-                        onClick={() => setMediaTypeFilter(prev => prev === 'movie' ? null : 'movie')}
-                        title="Filter by movies"
-                      >
-                        <Film size={13} />
-                        <span>Movies</span>
-                        <span className="chip-count">{movieCount}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={`chip-pill ${mediaTypeFilter === 'tv' ? 'active' : ''}`}
-                        onClick={() => setMediaTypeFilter(prev => prev === 'tv' ? null : 'tv')}
-                        title="Filter by TV shows"
-                      >
-                        <Tv size={13} />
-                        <span className="chip-label-full">TV Shows</span>
-                        <span className="chip-label-short">TV</span>
-                        <span className="chip-count">{tvCount}</span>
-                      </button>
-                    </div>
+                    {/* Left: Type Filter Chips (Watchlist) or Filter Button (Watched) */}
+                    {currentList.type === 'watched' ? (
+                      <div className="filter-menu-container" ref={filterMenuRef}>
+                        <button
+                          type="button"
+                          className={`sort-dropdown-wrapper filter-dropdown-wrapper ${isWatchedFilterActive(watchedFilters) ? 'active' : ''}`}
+                          onClick={() => setIsFilterModalOpen(prev => !prev)}
+                          title="Filter watched list"
+                        >
+                          <Filter size={12} className="sort-icon" />
+                          <span className="sort-label">Filter</span>
+                          {getActiveFilterCount(watchedFilters) > 0 && (
+                            <span className="filter-chip-count filter-toolbar-count">
+                              {getActiveFilterCount(watchedFilters)}
+                            </span>
+                          )}
+                          <ChevronDown size={11} className="sort-chevron" />
+                        </button>
+
+                        <WatchedFilterModal
+                          isOpen={isFilterModalOpen}
+                          onClose={() => setIsFilterModalOpen(false)}
+                          filters={watchedFilters}
+                          onChangeFilters={setWatchedFilters}
+                          movieCount={movieCount}
+                          tvCount={tvCount}
+                          totalCount={currentList.items.length}
+                          matchedCount={processedItems.length}
+                        />
+                      </div>
+                    ) : (
+                      <div className="filter-chips-group">
+                        <button
+                          type="button"
+                          className={`chip-pill ${mediaTypeFilter === 'movie' ? 'active' : ''}`}
+                          onClick={() => setMediaTypeFilter(prev => prev === 'movie' ? null : 'movie')}
+                          title="Filter by movies"
+                        >
+                          <Film size={13} />
+                          <span>Movies</span>
+                          <span className="chip-count">{movieCount}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`chip-pill ${mediaTypeFilter === 'tv' ? 'active' : ''}`}
+                          onClick={() => setMediaTypeFilter(prev => prev === 'tv' ? null : 'tv')}
+                          title="Filter by TV shows"
+                        >
+                          <Tv size={13} />
+                          <span className="chip-label-full">TV Shows</span>
+                          <span className="chip-label-short">TV</span>
+                          <span className="chip-count">{tvCount}</span>
+                        </button>
+                      </div>
+                    )}
 
                     {/* Right: Ultra-Compact Dynamic Sort Popover Button (Watched List Only) */}
                     {currentList.type === 'watched' && (
@@ -336,14 +416,33 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
 
                   {processedItems.length === 0 ? (
                     <div className="empty-state" style={{ padding: '2.5rem 1rem', textAlign: 'center' }}>
-                      {mediaTypeFilter === 'movie' ? <Film size={36} style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }} /> : <Tv size={36} style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }} />}
+                      {currentList.type === 'watched' ? (
+                        <Filter size={36} style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }} />
+                      ) : mediaTypeFilter === 'movie' ? (
+                        <Film size={36} style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }} />
+                      ) : (
+                        <Tv size={36} style={{ color: 'var(--text-tertiary)', marginBottom: '0.5rem' }} />
+                      )}
                       <h4 style={{ margin: '0 0 0.25rem 0', fontSize: '1.05rem', fontWeight: 700 }}>
-                        No {mediaTypeFilter === 'movie' ? 'movies' : 'TV shows'} in this list
+                        {currentList.type === 'watched'
+                          ? 'No items match your filters'
+                          : `No ${mediaTypeFilter === 'movie' ? 'movies' : 'TV shows'} in this list`}
                       </h4>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                        This list does not currently have any {mediaTypeFilter === 'movie' ? 'movies' : 'TV shows'}.
+                        {currentList.type === 'watched'
+                          ? 'Try adjusting your type, date range, or rating filters.'
+                          : `This list does not currently have any ${mediaTypeFilter === 'movie' ? 'movies' : 'TV shows'}.`}
                       </p>
-                      <button className="btn btn-small" onClick={() => setMediaTypeFilter(null)}>
+                      <button
+                        className="btn btn-small"
+                        onClick={() => {
+                          if (currentList.type === 'watched') {
+                            setWatchedFilters(DEFAULT_WATCHED_FILTERS);
+                          } else {
+                            setMediaTypeFilter(null);
+                          }
+                        }}
+                      >
                         Show All Items ({currentList.items.length})
                       </button>
                     </div>

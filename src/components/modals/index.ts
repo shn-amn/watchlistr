@@ -9,3 +9,4 @@ export { AuthorProfileModal } from './AuthorProfileModal';
 export { ConnectionModal } from './ConnectionModal';
 export { OnboardingModal } from './OnboardingModal';
 export { SearchModal } from './SearchModal';
+export { WatchedFilterModal } from './WatchedFilterModal';
