@@ -30,6 +30,10 @@ export function useSocialExplore({
     const saved = localStorage.getItem('watchlistr_blocked_pubkeys');
     return saved ? JSON.parse(saved) : [];
   });
+  const blockedPubkeysRef = useRef<string[]>(blockedPubkeys);
+  useEffect(() => {
+    blockedPubkeysRef.current = blockedPubkeys;
+  }, [blockedPubkeys]);
 
   // Explore tab state
   const [exploreLists, setExploreLists] = useState<MediaList[]>([]);
@@ -177,22 +181,68 @@ export function useSocialExplore({
     });
   };
 
+  // Helper to parse a kind:30016 event into a watched MediaList
+  const parseWatchedListEvent = (event: any): MediaList | null => {
+    const pk = event.pubkey || '';
+    const dTag = event.tags?.find((t: string[]) => t[0] === 'd')?.[1] || 'watchlist:default';
+    const titleTag = event.tags?.find((t: string[]) => t[0] === 'title')?.[1] || dTag;
+    const descTag = event.tags?.find((t: string[]) => t[0] === 'description')?.[1] || '';
+    const isWatchlist = dTag.startsWith('watchlist:') || dTag === 'watchlist';
+    const type: 'watchlist' | 'watched' = isWatchlist ? 'watchlist' : 'watched';
+
+    // Filter out to-watch / watchlist lists (keep ONLY watched lists)
+    if (type !== 'watched') return null;
+
+    const items: Media[] = (event.tags || [])
+      .filter((t: string[]) => t[0] === 'i')
+      .map((t: string[]) => {
+        const identifier = t[1] || '';
+        const datestamp = t[3] || '';
+        const ratingStr = t[4] || '';
+
+        let mediaType: 'movie' | 'tv' = 'movie';
+        let mediaId = identifier;
+
+        if (identifier.startsWith('ttvdb:')) {
+          const parts = identifier.split(':');
+          mediaType = parts[1] === 'series' ? 'tv' : 'movie';
+          mediaId = `${mediaType}-${parts[2]}`;
+        }
+
+        const ratingNum = parseFloat(ratingStr);
+        return {
+          id: mediaId,
+          title: 'Loading from the TVDB...',
+          year: datestamp ? datestamp.split('-')[0] : '',
+          type: mediaType,
+          poster: '',
+          genres: [],
+          watchedDate: datestamp || undefined,
+          userRating: isNaN(ratingNum) ? undefined : ratingNum
+        };
+      });
+
+    if (items.length === 0) return null;
+
+    return {
+      id: `social:${pk}:${dTag}`,
+      title: cleanListTitle(titleTag),
+      description: descTag,
+      type,
+      items,
+      createdAt: event.created_at
+    };
+  };
+
   // Load global explore lists (kind:30016)
-  const loadExploreData = async (isInitial: boolean = false) => {
+  const loadExploreData = async (
+    isInitial: boolean = false,
+    overrideUser?: NostrUser | null,
+    overrideBlocks?: string[]
+  ) => {
     if (!nostrServiceRef.current) return;
     if (isInitial) {
       setIsExploreLoading(true);
-      if (nostrUser?.pubkey) {
-        try {
-          const freshBlocks = await nostrServiceRef.current.fetchUserBlocks(nostrUser.pubkey);
-          if (freshBlocks && freshBlocks.length > 0) {
-            setBlockedPubkeys(freshBlocks);
-            localStorage.setItem('watchlistr_blocked_pubkeys', JSON.stringify(freshBlocks));
-          }
-        } catch (e) {
-          console.error("Failed to refresh mute list:", e);
-        }
-      }
     } else {
       if (isExploreLoadingMore || !hasMoreExplore) return;
       setIsExploreLoadingMore(true);
@@ -235,62 +285,18 @@ export function useSocialExplore({
         }
       });
 
+      const effectiveUser = overrideUser !== undefined ? overrideUser : nostrUser;
+      const effectiveBlocks = overrideBlocks !== undefined ? overrideBlocks : blockedPubkeysRef.current;
+
       const newLists: MediaList[] = [];
       remoteEvents.forEach(event => {
         const pk = event.pubkey || '';
         // Filter out logged in user's own lists and blocked users
-        if ((nostrUser?.pubkey && pk === nostrUser.pubkey) || blockedPubkeys.includes(pk)) return;
-        const dTag = event.tags.find(t => t[0] === 'd')?.[1] || 'watchlist:default';
-        const titleTag = event.tags.find(t => t[0] === 'title')?.[1] || dTag;
-        const descTag = event.tags.find(t => t[0] === 'description')?.[1] || '';
-        const isWatchlist = dTag.startsWith('watchlist:') || dTag === 'watchlist';
-        const type: 'watchlist' | 'watched' = isWatchlist ? 'watchlist' : 'watched';
-
-        // Filter out to-watch / watchlist lists (keep ONLY watched lists)
-        if (type !== 'watched') return;
-
-        const listId = `social:${pk}:${dTag}`;
-
-        const items: Media[] = event.tags
-          .filter(t => t[0] === 'i')
-          .map(t => {
-            const identifier = t[1] || '';
-            const datestamp = t[3] || '';
-            const ratingStr = t[4] || '';
-
-            let mediaType: 'movie' | 'tv' = 'movie';
-            let mediaId = identifier;
-
-            if (identifier.startsWith('ttvdb:')) {
-              const parts = identifier.split(':');
-              mediaType = parts[1] === 'series' ? 'tv' : 'movie';
-              mediaId = `${mediaType}-${parts[2]}`;
-            }
-
-            const ratingNum = parseFloat(ratingStr);
-            return {
-              id: mediaId,
-              title: 'Loading from the TVDB...',
-              year: datestamp ? datestamp.split('-')[0] : '',
-              type: mediaType,
-              poster: '',
-              genres: [],
-              watchedDate: datestamp || undefined,
-              userRating: isNaN(ratingNum) ? undefined : ratingNum
-            };
-          });
-
-        // Filter out empty lists
-        if (items.length === 0) return;
-
-        newLists.push({
-          id: listId,
-          title: cleanListTitle(titleTag),
-          description: descTag,
-          type,
-          items,
-          createdAt: event.created_at
-        });
+        if ((effectiveUser?.pubkey && pk === effectiveUser.pubkey) || effectiveBlocks.includes(pk.toLowerCase().trim())) return;
+        const parsed = parseWatchedListEvent(event);
+        if (parsed) {
+          newLists.push(parsed);
+        }
       });
 
       setExploreLists(prev => {
@@ -406,10 +412,12 @@ export function useSocialExplore({
     }
   };
 
-  const handleBlockUser = (hex: string) => {
-    if (blockedPubkeys.includes(hex)) return;
+  const handleBlockUser = (rawKey: string) => {
+    const hex = decodeNpubToHex(rawKey) || (rawKey ? rawKey.toLowerCase().trim() : '');
+    if (!hex || blockedPubkeys.includes(hex)) return;
 
     const nextBlocks = [...blockedPubkeys, hex];
+    blockedPubkeysRef.current = nextBlocks;
     setBlockedPubkeys(nextBlocks);
     localStorage.setItem('watchlistr_blocked_pubkeys', JSON.stringify(nextBlocks));
 
@@ -417,18 +425,24 @@ export function useSocialExplore({
     publishBlockListToNostr(nextBlocks);
   };
 
-  const handleUnblockUser = (hex: string) => {
-    const nextBlocks = blockedPubkeys.filter(k => k !== hex);
+  const handleUnblockUser = (rawKey: string) => {
+    const hex = decodeNpubToHex(rawKey) || (rawKey ? rawKey.toLowerCase().trim() : '');
+    if (!hex) return;
+    const nextBlocks = blockedPubkeys.filter(k => k.toLowerCase().trim() !== hex);
+    blockedPubkeysRef.current = nextBlocks;
     setBlockedPubkeys(nextBlocks);
     localStorage.setItem('watchlistr_blocked_pubkeys', JSON.stringify(nextBlocks));
 
     publishBlockListToNostr(nextBlocks);
+
+    // Refresh explore feed so any unblocked posts appear in their natural chronological order
+    loadExploreData(true);
   };
 
   const publishBlockListToNostr = async (keysToPublish: string[]) => {
     if (!nostrUser || nostrUser.readOnly || !nostrServiceRef.current || !activeSignerRef.current) return;
     try {
-      const pTags = keysToPublish.map(pk => ["p", pk]);
+      const pTags = keysToPublish.map(pk => ["p", pk.toLowerCase().trim()]);
       const unsignedEvent = {
         created_at: Math.floor(Date.now() / 1000),
         kind: 30007,
@@ -443,6 +457,23 @@ export function useSocialExplore({
     } catch (e) {
       console.error("Failed to publish kind:30007 block list:", e);
     }
+  };
+
+  const resetSocialState = () => {
+    blockedPubkeysRef.current = [];
+    setBlockedPubkeys([]);
+    localStorage.removeItem('watchlistr_blocked_pubkeys');
+
+    setFollowedPubkeys([]);
+    setFollowedProfiles({});
+    setFollowedListsMap({});
+    localStorage.removeItem('watchlistr_followed_pubkeys');
+
+    setActiveHubTab('explore');
+    setExploreUntil(undefined);
+    setHasMoreExplore(true);
+
+    loadExploreData(true, null, []);
   };
 
   return {
@@ -477,6 +508,7 @@ export function useSocialExplore({
     handleUnfollowUser,
     handleBlockUser,
     handleUnblockUser,
-    loadFollowedData
+    loadFollowedData,
+    resetSocialState
   };
 }

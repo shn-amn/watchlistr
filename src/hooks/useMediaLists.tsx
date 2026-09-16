@@ -369,7 +369,7 @@ export function useMediaLists({
       // 4. Fetch blocked pubkeys (kind:30007)
       if (onSyncBlocks) {
         const remoteBlocks = await nostrServiceRef.current.fetchUserBlocks(pubkey);
-        if (remoteBlocks && remoteBlocks.length > 0) {
+        if (remoteBlocks) {
           onSyncBlocks(remoteBlocks);
         }
       }
@@ -721,6 +721,33 @@ export function useMediaLists({
     });
   };
 
+  const resetListsOnLogout = () => {
+    setSelectedListId(null);
+    setActiveWatchlistId('watchlist:default');
+    setActiveWatchedId('watched:default');
+    setDeletedListIds({});
+    localStorage.removeItem('watchlistr_deleted_lists');
+    localStorage.removeItem('watchlistr_lists');
+    setLists([
+      {
+        id: 'watchlist:default',
+        title: 'To Watch',
+        description: 'My default list of items to watch.',
+        type: 'watchlist',
+        items: [],
+        createdAt: 0
+      },
+      {
+        id: 'watched:default',
+        title: 'Watched',
+        description: 'My default list of watched items.',
+        type: 'watched',
+        items: [],
+        createdAt: 0
+      }
+    ]);
+  };
+
   return {
     lists,
     setLists,
@@ -762,6 +789,7 @@ export function useMediaLists({
     setTodayDate,
     syncFromNostr,
     publishListToNostr,
-    deleteListFromNostr
+    deleteListFromNostr,
+    resetListsOnLogout
   };
 }

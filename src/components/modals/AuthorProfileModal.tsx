@@ -41,6 +41,7 @@ export const AuthorProfileModal: React.FC<AuthorProfileModalProps> = ({
   if (!isOpen || !pubkey) return null;
 
   const pk = pubkey;
+  const isBlocked = blockedPubkeys.includes(pk.toLowerCase().trim());
   const profile = followedProfiles[pk] || exploreProfiles[pk];
   const displayName = profile?.name || `${pk.substring(0, 8)}...${pk.substring(pk.length - 4)}`;
   const isFollowing = followedPubkeys.includes(pk);
@@ -121,7 +122,7 @@ export const AuthorProfileModal: React.FC<AuthorProfileModalProps> = ({
                 </button>
               )}
 
-              {blockedPubkeys.includes(pk) ? (
+              {isBlocked ? (
                 <button
                   className="btn"
                   style={{ flex: 1, justifyContent: 'center', padding: '0.6rem 1rem' }}
@@ -134,10 +135,7 @@ export const AuthorProfileModal: React.FC<AuthorProfileModalProps> = ({
                 <button
                   className="btn btn-action-icon btn-delete"
                   style={{ flex: 1, justifyContent: 'center', padding: '0.6rem 1rem' }}
-                  onClick={() => {
-                    onBlockUser(pk);
-                    onClose();
-                  }}
+                  onClick={() => onBlockUser(pk)}
                   title="Block profile"
                 >
                   <UserX size={16} /> Block

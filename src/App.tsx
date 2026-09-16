@@ -85,28 +85,8 @@ function App() {
   // Clean logout handler
   const handleLogout = () => {
     auth.logoutNostr();
-    lists.setSelectedListId(null);
-    lists.setLists([
-      {
-        id: 'watchlist:default',
-        title: 'To Watch',
-        description: 'My default list of items to watch.',
-        type: 'watchlist',
-        items: [],
-        createdAt: 0
-      },
-      {
-        id: 'watched:default',
-        title: 'Watched',
-        description: 'My default list of watched items.',
-        type: 'watched',
-        items: [],
-        createdAt: 0
-      }
-    ]);
-    social.setFollowedPubkeys([]);
-    social.setFollowedProfiles({});
-    social.setFollowedListsMap({});
+    lists.resetListsOnLogout();
+    social.resetSocialState();
   };
 
   // Resolve currently viewed list and social profile context

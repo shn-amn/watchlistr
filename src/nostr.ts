@@ -2,6 +2,16 @@ import { parseBunkerInput, BunkerSigner, createNostrConnectURI } from 'nostr-too
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { nip04, nip44 } from 'nostr-tools';
 
+export const REQUIRED_NOSTR_PERMISSIONS: string[] = [
+  'get_public_key',
+  'sign_event:0',     // Metadata / Profile updates
+  'sign_event:5',     // Deletion / Tombstones
+  'sign_event:10016', // Watchlistr Follows (NIP-51 follow list)
+  'sign_event:27235', // NIP-98 media upload authentication (nostr.build)
+  'sign_event:30007', // Watchlistr Block/Mute list (NIP-51 mute list)
+  'sign_event:30016', // Watchlistr Lists (NIP-51 curated list)
+];
+
 export interface NostrEvent {
   id?: string;
   pubkey?: string;
@@ -162,9 +172,15 @@ export async function createBunkerSigner(
   const appOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://watchlistr.app';
   const clientMetadata = { name: 'Watchlistr', url: appOrigin };
 
-  // Send connect request with strict 10s timeout
+  // Send connect request with strict 10s timeout, requesting unified permissions
   try {
-    const connectPromise = bunkerSigner.connect(clientMetadata);
+    const permsString = REQUIRED_NOSTR_PERMISSIONS.join(',');
+    const connectPromise = (bunkerSigner as any).sendRequest('connect', [
+      bunkerPointer.pubkey,
+      bunkerPointer.secret || '',
+      permsString,
+      JSON.stringify(clientMetadata)
+    ]);
     await Promise.race([
       connectPromise,
       new Promise((_, reject) =>
@@ -228,7 +244,7 @@ export function startNostrConnectSession(
     secret: secretHex,
     name: 'Watchlistr',
     url: appOrigin,
-    perms: ['get_public_key', 'sign_event:0', 'sign_event:5', 'sign_event:30016', 'sign_event:10016', 'sign_event:30007']
+    perms: REQUIRED_NOSTR_PERMISSIONS
   });
 
   const uri = rawUri
@@ -849,13 +865,31 @@ export class NostrService {
     await Promise.all(promises);
 
     if (eventsList.length === 0) return [];
-    const pSet = new Set<string>();
+
+    // Group kind:30007 events by d-tag, keeping the newest event (max created_at) per NIP-33/NIP-51
+    const newestByDTag = new Map<string, NostrEvent>();
     eventsList.forEach(event => {
-      event.tags.forEach(t => {
-        if (t[0] === 'p' && t[1]) {
-          pSet.add(t[1]);
-        }
-      });
+      const dTag = event.tags.find(t => t[0] === 'd')?.[1] || '';
+      const existing = newestByDTag.get(dTag);
+      if (!existing || event.created_at > existing.created_at) {
+        newestByDTag.set(dTag, event);
+      }
+    });
+
+    // If Watchlistr block list (d: "30016") exists, it is the authoritative blocklist
+    let targetEvent = newestByDTag.get('30016');
+    if (!targetEvent) {
+      // Fallback to standard NIP-51 mute list if 30016 has not been created yet
+      targetEvent = newestByDTag.get('mute');
+    }
+
+    if (!targetEvent) return [];
+
+    const pSet = new Set<string>();
+    targetEvent.tags.forEach(t => {
+      if (t[0] === 'p' && t[1]) {
+        pSet.add(t[1].toLowerCase().trim());
+      }
     });
     return Array.from(pSet);
   }
