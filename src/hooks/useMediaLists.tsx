@@ -31,6 +31,8 @@ export function useMediaLists({
   onSyncFollows,
   onSyncBlocks
 }: UseMediaListsProps) {
+  const activeSyncPubkeyRef = React.useRef<string | null>(null);
+
   // Tombstone registry of deleted list IDs with deletion timestamp
   const [deletedListIds, setDeletedListIds] = useState<Record<string, number>>(() => {
     try {
@@ -236,11 +238,14 @@ export function useMediaLists({
 
   const syncFromNostr = async (pubkey: string) => {
     if (!nostrServiceRef.current) return;
+    activeSyncPubkeyRef.current = pubkey;
     setIsSyncing(true);
 
     try {
       // 1. Fetch own lists (kind:30016 and kind:5 deletions)
       const events = await nostrServiceRef.current.fetchUserLists(pubkey);
+      if (activeSyncPubkeyRef.current !== pubkey) return;
+
       const remoteLists: MediaList[] = [];
 
       for (const event of events) {
@@ -306,6 +311,7 @@ export function useMediaLists({
       }
 
       setLists(prev => {
+        if (activeSyncPubkeyRef.current !== pubkey) return prev;
         const merged = [...prev];
         remoteLists.forEach(remote => {
           // Double check against deletedListIds
@@ -325,6 +331,8 @@ export function useMediaLists({
         });
         return merged;
       });
+
+      if (activeSyncPubkeyRef.current !== pubkey) return;
 
       const watchlists = remoteLists.filter(x => x.type === 'watchlist');
       const watchedlists = remoteLists.filter(x => x.type === 'watched');
@@ -347,6 +355,7 @@ export function useMediaLists({
       // 2. Fetch profile metadata (kind:0)
       if (onSyncProfile) {
         const profileEvent = await nostrServiceRef.current.fetchUserProfile(pubkey);
+        if (activeSyncPubkeyRef.current !== pubkey) return;
         if (profileEvent) {
           try {
             const meta = JSON.parse(profileEvent.content);
@@ -361,6 +370,7 @@ export function useMediaLists({
       // 3. Fetch followed pubkeys (kind:10016)
       if (onSyncFollows) {
         const remoteFollows = await nostrServiceRef.current.fetchUserFollows(pubkey);
+        if (activeSyncPubkeyRef.current !== pubkey) return;
         if (remoteFollows && remoteFollows.length > 0) {
           onSyncFollows(remoteFollows);
         }
@@ -369,6 +379,7 @@ export function useMediaLists({
       // 4. Fetch blocked pubkeys (kind:30007)
       if (onSyncBlocks) {
         const remoteBlocks = await nostrServiceRef.current.fetchUserBlocks(pubkey);
+        if (activeSyncPubkeyRef.current !== pubkey) return;
         if (remoteBlocks) {
           onSyncBlocks(remoteBlocks);
         }
@@ -376,7 +387,9 @@ export function useMediaLists({
     } catch (err) {
       console.error("Failed to sync from Nostr:", err);
     } finally {
-      setIsSyncing(false);
+      if (activeSyncPubkeyRef.current === pubkey) {
+        setIsSyncing(false);
+      }
     }
   };
 
@@ -722,6 +735,8 @@ export function useMediaLists({
   };
 
   const resetListsOnLogout = () => {
+    activeSyncPubkeyRef.current = null;
+    setIsSyncing(false);
     setSelectedListId(null);
     setActiveWatchlistId('watchlist:default');
     setActiveWatchedId('watched:default');

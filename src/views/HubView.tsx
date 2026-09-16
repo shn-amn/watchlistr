@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { User, Globe, Users, RefreshCw, Plus, UserPlus, UserMinus } from 'lucide-react';
 import type { MediaList, NostrUser } from '../types';
 import { renderListTitle } from '../utils';
@@ -71,6 +71,18 @@ export const HubView: React.FC<HubViewProps> = ({
   onOpenAuthorProfile,
   relayStatuses
 }) => {
+  const filteredExploreLists = useMemo(() => {
+    const userPk = nostrUser?.pubkey ? nostrUser.pubkey.toLowerCase().trim() : null;
+    const blockedSet = new Set(blockedPubkeys.map(pk => pk.toLowerCase().trim()));
+
+    return exploreLists.filter(list => {
+      const authorPk = (list.id.split(':')[1] || '').toLowerCase().trim();
+      if (userPk && authorPk === userPk) return false;
+      if (nostrUser && blockedSet.has(authorPk)) return false;
+      return true;
+    });
+  }, [exploreLists, nostrUser, blockedPubkeys]);
+
   return (
     <div className="hub-layout">
       {/* Top User Profile / Log In Header */}
@@ -101,7 +113,7 @@ export const HubView: React.FC<HubViewProps> = ({
           className={`hub-tab ${activeHubTab === 'explore' ? 'active' : ''}`}
           onClick={() => {
             setActiveHubTab('explore');
-            if (exploreLists.length === 0 && !isExploreLoading) {
+            if (filteredExploreLists.length === 0 && !isExploreLoading) {
               onRefreshExplore(true);
             }
           }}
@@ -144,12 +156,12 @@ export const HubView: React.FC<HubViewProps> = ({
             </button>
           </div>
 
-          {isExploreLoading && exploreLists.length === 0 ? (
+          {isExploreLoading && filteredExploreLists.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
               <RefreshCw size={28} className="spin" style={{ marginBottom: '0.5rem', color: 'var(--accent-color)' }} />
               <div>Querying relays for public <code>kind:30016</code> watchlists...</div>
             </div>
-          ) : exploreLists.length === 0 ? (
+          ) : filteredExploreLists.length === 0 ? (
             <div className="empty-state" style={{ padding: '3rem 1.5rem', textAlign: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)' }}>
               <Globe size={36} style={{ color: 'var(--accent-color)', marginBottom: '0.75rem' }} />
               <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem' }}>No public lists found</h3>
@@ -163,7 +175,7 @@ export const HubView: React.FC<HubViewProps> = ({
           ) : (
             <div className="following-feed">
               <div className="lists-grid">
-                {exploreLists.filter(list => !blockedPubkeys.includes(list.id.split(':')[1] || '')).map(list => {
+                {filteredExploreLists.map(list => {
                   const pubkey = list.id.split(':')[1] || '';
                   const profile = followedProfiles[pubkey] || exploreProfiles[pubkey];
                   const displayName = profile?.name || (pubkey ? `${pubkey.substring(0, 8)}...${pubkey.substring(pubkey.length - 4)}` : 'Anonymous');
@@ -208,7 +220,7 @@ export const HubView: React.FC<HubViewProps> = ({
                     <span>Loading older watchlists...</span>
                   </div>
                 )}
-                {!hasMoreExplore && exploreLists.length > 0 && (
+                {!hasMoreExplore && filteredExploreLists.length > 0 && (
                   <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
                     Reached end of recent public watchlists.
                   </div>

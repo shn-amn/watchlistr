@@ -35,7 +35,21 @@ export function useSocialExplore({
     blockedPubkeysRef.current = blockedPubkeys;
   }, [blockedPubkeys]);
 
+  // Clean social and blocked state whenever logged out
+  useEffect(() => {
+    if (!nostrUser) {
+      blockedPubkeysRef.current = [];
+      setBlockedPubkeys([]);
+      setFollowedPubkeys([]);
+      setFollowedProfiles({});
+      setFollowedListsMap({});
+      localStorage.removeItem('watchlistr_blocked_pubkeys');
+      localStorage.removeItem('watchlistr_followed_pubkeys');
+    }
+  }, [nostrUser]);
+
   // Explore tab state
+  const exploreRequestIdRef = useRef<number>(0);
   const [exploreLists, setExploreLists] = useState<MediaList[]>([]);
   const [exploreProfiles, setExploreProfiles] = useState<Record<string, { name?: string; picture?: string }>>({});
   const [isExploreLoading, setIsExploreLoading] = useState(false);
@@ -43,6 +57,22 @@ export function useSocialExplore({
   const [hasMoreExplore, setHasMoreExplore] = useState(true);
   const [exploreUntil, setExploreUntil] = useState<number | undefined>(undefined);
   const exploreObserverRef = useRef<HTMLDivElement | null>(null);
+
+  // Prune own lists from explore state whenever logged-in user changes
+  useEffect(() => {
+    if (nostrUser?.pubkey) {
+      const userPk = nostrUser.pubkey.toLowerCase().trim();
+      setExploreLists(prev => prev.filter(l => (l.id.split(':')[1] || '').toLowerCase().trim() !== userPk));
+    }
+  }, [nostrUser?.pubkey]);
+
+  // Prune blocked users' lists from explore state whenever blocks update
+  useEffect(() => {
+    if (nostrUser && blockedPubkeys.length > 0) {
+      const blockedSet = new Set(blockedPubkeys.map(pk => pk.toLowerCase().trim()));
+      setExploreLists(prev => prev.filter(l => !blockedSet.has((l.id.split(':')[1] || '').toLowerCase().trim())));
+    }
+  }, [nostrUser, blockedPubkeys]);
 
   // Modal states
   const [isFollowModalOpen, setIsFollowModalOpen] = useState(false);
@@ -241,6 +271,7 @@ export function useSocialExplore({
     overrideBlocks?: string[]
   ) => {
     if (!nostrServiceRef.current) return;
+    const reqId = ++exploreRequestIdRef.current;
     if (isInitial) {
       setIsExploreLoading(true);
     } else {
@@ -251,6 +282,7 @@ export function useSocialExplore({
     try {
       const untilParam = isInitial ? undefined : exploreUntil;
       const remoteEvents = await nostrServiceRef.current.fetchExploreLists(20, untilParam);
+      if (exploreRequestIdRef.current !== reqId) return;
 
       if (remoteEvents.length === 0) {
         setHasMoreExplore(false);
@@ -286,13 +318,17 @@ export function useSocialExplore({
       });
 
       const effectiveUser = overrideUser !== undefined ? overrideUser : nostrUser;
-      const effectiveBlocks = overrideBlocks !== undefined ? overrideBlocks : blockedPubkeysRef.current;
+      const effectiveBlocks = overrideBlocks !== undefined
+        ? overrideBlocks
+        : (effectiveUser ? blockedPubkeysRef.current : []);
 
       const newLists: MediaList[] = [];
       remoteEvents.forEach(event => {
         const pk = event.pubkey || '';
+        const authorPk = pk.toLowerCase().trim();
+        const userPk = effectiveUser?.pubkey ? effectiveUser.pubkey.toLowerCase().trim() : null;
         // Filter out logged in user's own lists and blocked users
-        if ((effectiveUser?.pubkey && pk === effectiveUser.pubkey) || effectiveBlocks.includes(pk.toLowerCase().trim())) return;
+        if ((userPk && authorPk === userPk) || effectiveBlocks.some(b => b.toLowerCase().trim() === authorPk)) return;
         const parsed = parseWatchedListEvent(event);
         if (parsed) {
           newLists.push(parsed);
@@ -460,6 +496,7 @@ export function useSocialExplore({
   };
 
   const resetSocialState = () => {
+    exploreRequestIdRef.current++;
     blockedPubkeysRef.current = [];
     setBlockedPubkeys([]);
     localStorage.removeItem('watchlistr_blocked_pubkeys');
@@ -469,6 +506,7 @@ export function useSocialExplore({
     setFollowedListsMap({});
     localStorage.removeItem('watchlistr_followed_pubkeys');
 
+    setExploreLists([]);
     setActiveHubTab('explore');
     setExploreUntil(undefined);
     setHasMoreExplore(true);

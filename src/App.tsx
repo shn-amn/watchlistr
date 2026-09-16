@@ -42,7 +42,12 @@ import {
 
 function App() {
   // 1. Core Hooks
-  const auth = useNostrAuth();
+  const auth = useNostrAuth({
+    onLogout: () => {
+      lists.resetListsOnLogout();
+      social.resetSocialState();
+    }
+  });
 
   const social = useSocialExplore({
     nostrUser: auth.nostrUser,
@@ -63,11 +68,13 @@ function App() {
       } : null);
     },
     onSyncFollows: (remoteFollows) => {
+      if (!auth.nostrUser?.pubkey) return;
       social.setFollowedPubkeys(remoteFollows);
       localStorage.setItem('watchlistr_followed_pubkeys', JSON.stringify(remoteFollows));
       social.loadFollowedData(remoteFollows);
     },
     onSyncBlocks: (remoteBlocks) => {
+      if (!auth.nostrUser?.pubkey) return;
       social.setBlockedPubkeys(remoteBlocks);
       localStorage.setItem('watchlistr_blocked_pubkeys', JSON.stringify(remoteBlocks));
     }
@@ -311,7 +318,7 @@ function App() {
         onClose={() => auth.setIsSettingsModalOpen(false)}
         relays={DEFAULT_RELAYS}
         relayStatuses={auth.relayStatuses}
-        blockedPubkeys={social.blockedPubkeys}
+        blockedPubkeys={auth.nostrUser ? social.blockedPubkeys : []}
         profiles={{ ...social.followedProfiles, ...social.exploreProfiles }}
         onUnblockUser={social.handleUnblockUser}
       />
