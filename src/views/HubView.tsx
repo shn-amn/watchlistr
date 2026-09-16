@@ -201,9 +201,6 @@ export const HubView: React.FC<HubViewProps> = ({
                         </div>
                       </div>
 
-                      <h3 className="list-card-title" style={{ marginTop: '0.5rem' }}>{renderListTitle(list)}</h3>
-                      <p className="list-card-desc">{list.description || 'No description provided.'}</p>
-
                       <div className="list-card-footer">
                         <ListCardPosterStrip list={list} />
                       </div>
