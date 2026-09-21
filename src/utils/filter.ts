@@ -34,8 +34,17 @@ export function resolveDateBounds(year: string, month: string, day: string, isEn
   return `${y}-${m}-${d}`;
 }
 
+export function getTodayISO(): string {
+  const d = new Date();
+  const y = String(d.getFullYear()).padStart(4, '0');
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 /**
  * Resolves an item's watchedDate string (YYYY, YYYY-MM, or YYYY-MM-DD) into its [startBound, endBound] interval.
+ * Watched items cannot have occurred in the future, so the end bound is capped at today.
  */
 export function resolveItemDateBounds(watchedDate?: string): [string, string] | null {
   if (!watchedDate || !watchedDate.trim()) return null;
@@ -47,13 +56,18 @@ export function resolveItemDateBounds(watchedDate?: string): [string, string] | 
   const d = parts[2] || '';
 
   const start = resolveDateBounds(y, m, d, false);
-  const end = resolveDateBounds(y, m, d, true);
+  const rawEnd = resolveDateBounds(y, m, d, true);
+  const todayISO = getTodayISO();
+  const end = rawEnd > todayISO ? todayISO : rawEnd;
   return [start, end];
 }
 
 /**
- * Checks whether an item's watchedDate overlaps with the filter interval.
+ * Checks whether an item's watchedDate is strictly contained within the filter interval.
+ * Strict/conservative inclusion: only items whose entire date precision interval is
+ * guaranteed to be within the filter boundaries are included.
  * If date filter is active and item lacks a valid watchedDate, returns false.
+ * If the To (max) boundary is not chosen, it defaults to today.
  */
 export function matchesDateRange(
   itemWatchedDate: string | undefined,
@@ -73,18 +87,23 @@ export function matchesDateRange(
   if (!bounds) return false;
   const [itemStart, itemEnd] = bounds;
 
+  const todayISO = getTodayISO();
+
   if (isFromSet) {
     const fromBound = resolveDateBounds(fromFilter.year, fromFilter.month, fromFilter.day, false);
-    if (fromBound && itemEnd < fromBound) {
+    if (fromBound && itemStart < fromBound) {
       return false;
     }
   }
 
-  if (isToSet) {
-    const toBound = resolveDateBounds(toFilter.year, toFilter.month, toFilter.day, true);
-    if (toBound && itemStart > toBound) {
-      return false;
-    }
+  // If To is set, use resolved bound (capped at today); otherwise default max date is today
+  const rawToBound = isToSet
+    ? resolveDateBounds(toFilter.year, toFilter.month, toFilter.day, true)
+    : todayISO;
+  const toBound = rawToBound > todayISO ? todayISO : rawToBound;
+
+  if (toBound && itemEnd > toBound) {
+    return false;
   }
 
   return true;
