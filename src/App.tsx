@@ -27,7 +27,8 @@ import {
   SearchModal
 } from './components/modals';
 import {
-  FloatingAddButton
+  FloatingAddButton,
+  ToastContainer
 } from './components/common';
 import {
   HubView,
@@ -37,15 +38,21 @@ import {
   useMediaSearch,
   useNostrAuth,
   useSocialExplore,
-  useMediaLists
+  useMediaLists,
+  useToast,
+  useOutbox
 } from './hooks';
 
 function App() {
+  const { toasts, showToast, removeToast } = useToast();
+  const outboxState = useOutbox();
+
   // 1. Core Hooks
   const auth = useNostrAuth({
     onLogout: () => {
       lists.resetListsOnLogout();
       social.resetSocialState();
+      outboxState.clearOutbox();
     }
   });
 
@@ -60,6 +67,13 @@ function App() {
     nostrServiceRef: auth.nostrServiceRef,
     activeSignerRef: auth.activeSignerRef,
     setIsSyncing: auth.setIsSyncing,
+    connectionStatus: auth.connectionStatus,
+    setConnectionStatus: auth.setConnectionStatus,
+    showToast,
+    outbox: outboxState.outbox,
+    enqueueAction: outboxState.enqueueAction,
+    removeAction: outboxState.removeAction,
+    isEntityPending: outboxState.isEntityPending,
     onSyncProfile: (meta) => {
       auth.setNostrUser(prev => prev ? {
         ...prev,
@@ -123,6 +137,8 @@ function App() {
         <HubView
           nostrUser={auth.nostrUser}
           isSyncing={auth.isSyncing}
+          connectionStatus={auth.connectionStatus}
+          isEntityPending={outboxState.isEntityPending}
           onOpenSettings={() => auth.setIsSettingsModalOpen(true)}
           onOpenConnection={() => auth.setIsConnectionModalOpen(true)}
           onOpenLogin={() => {
@@ -158,6 +174,8 @@ function App() {
         <WorkspaceView
           nostrUser={auth.nostrUser}
           isSyncing={auth.isSyncing}
+          connectionStatus={auth.connectionStatus}
+          isEntityPending={outboxState.isEntityPending}
           onOpenSettings={() => auth.setIsSettingsModalOpen(true)}
           onOpenConnection={() => auth.setIsConnectionModalOpen(true)}
           onOpenLogin={() => {
@@ -310,6 +328,28 @@ function App() {
         handleFileSelection={auth.handleFileSelection}
         handlePublishProfile={auth.handlePublishProfile}
         logoutNostr={handleLogout}
+        connectionStatus={auth.connectionStatus}
+        onReconnect={async () => {
+          const ok = await auth.reconnectBunker();
+          if (ok) {
+            if (auth.nostrUser?.pubkey) {
+              await lists.syncFromNostr(auth.nostrUser.pubkey);
+            }
+            await lists.flushOutbox();
+          }
+          return ok;
+        }}
+        repairConnectUri={auth.repairConnectUri}
+        isRepairing={auth.isRepairing}
+        onStartRepair={() => {
+          auth.startRepairSession(async () => {
+            if (auth.nostrUser?.pubkey) {
+              await lists.syncFromNostr(auth.nostrUser.pubkey);
+            }
+            await lists.flushOutbox();
+          });
+        }}
+        onCancelRepair={auth.cancelRepairSession}
       />
 
       {/* Settings Modal */}
@@ -371,8 +411,12 @@ function App() {
         isPublishingProfile={auth.isPublishingProfile}
         publishingStep={auth.publishingStep}
       />
+
+      {/* Actionable Toasts Container (Errors, Retries, Rollbacks) */}
+      <ToastContainer toasts={toasts} onDismiss={removeToast} />
     </div>
   );
 }
 
 export default App;
+

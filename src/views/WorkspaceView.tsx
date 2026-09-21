@@ -9,7 +9,8 @@ import {
   ArrowUpDown,
   ChevronDown,
   Check,
-  Filter
+  Filter,
+  CloudOff
 } from 'lucide-react';
 import type {
   Media,
@@ -17,7 +18,8 @@ import type {
   NostrUser,
   MediaTypeFilter,
   MediaSortOrder,
-  WatchedFiltersState
+  WatchedFiltersState,
+  ConnectionStatus
 } from '../types';
 import {
   renderListTitle,
@@ -42,6 +44,8 @@ export interface WorkspaceViewProps {
   onOpenSettings: () => void;
   onOpenConnection: () => void;
   onOpenLogin: () => void;
+  connectionStatus?: ConnectionStatus;
+  isEntityPending?: (entityId: string) => boolean;
 
   // List Context
   currentList: MediaList | undefined;
@@ -67,6 +71,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   onOpenSettings,
   onOpenConnection,
   onOpenLogin,
+  connectionStatus,
+  isEntityPending,
   currentList,
   isSocialList,
   socialProfile,
@@ -132,6 +138,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
         onOpenSettings={onOpenSettings}
         onOpenConnection={onOpenConnection}
         onOpenLogin={onOpenLogin}
+        connectionStatus={connectionStatus}
       />
 
       {/* List Workspace Header */}
@@ -163,6 +170,27 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
                   </span>
                   <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>/</span>
                   <span>{renderListTitle(currentList)}</span>
+                  {isEntityPending?.(currentList.id) && (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontSize: '0.75rem',
+                        color: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        border: '1px solid rgba(239, 68, 68, 0.25)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '2px 6px',
+                        fontWeight: 500,
+                        marginLeft: '4px'
+                      }}
+                      title="Unsynced changes — will sync when connected"
+                    >
+                      <CloudOff size={13} />
+                      <span>Unsynced</span>
+                    </span>
+                  )}
                 </h1>
 
                 {!isSocialList && (!nostrUser || !nostrUser.readOnly) && (

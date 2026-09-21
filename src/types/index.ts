@@ -100,3 +100,27 @@ export interface AuthorProfileModalState {
   isOpen: boolean;
   pubkey: string | null;
 }
+
+// Connection lifecycle state
+export type ConnectionStatus = 'connected' | 'connecting' | 'broken' | 'disconnected';
+
+// Outbox pattern types for offline sync & rollback
+export interface OutboxAction {
+  id: string;
+  entityType: 'list';
+  entityId: string;
+  action: 'create' | 'update' | 'delete';
+  payload: any;
+  previousSnapshot?: any;
+  timestamp: number;
+}
+
+// Toast notification types with rollback/retry actions
+export interface ToastNotification {
+  id: string;
+  type: 'error' | 'info' | 'success';
+  message: string;
+  onRetry?: () => void;
+  onRollback?: () => void;
+}
+

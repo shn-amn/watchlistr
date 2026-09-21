@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   NostrService,
   Nip07Signer,
@@ -10,13 +10,17 @@ import {
 } from '../nostr';
 import type { NostrSigner } from '../nostr';
 import { DEFAULT_RELAYS } from '../constants';
-import type { NostrUser } from '../types';
+import type { NostrUser, ConnectionStatus } from '../types';
 import { decodeNpubToHex } from '../utils';
+
+// Progressive backoff retry intervals: 1m, 2m, 5m, 15m, 1h, 4h, 12h, 24h
+const RETRY_INTERVALS = [60, 120, 300, 900, 3600, 14400, 43200, 86400];
 
 export interface UseNostrAuthProps {
   onLoginSuccess?: (pubkey: string) => void;
   onLogout?: () => void;
 }
+
 
 export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {}) {
   // Nostr User & Signer states
@@ -30,6 +34,20 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
   const [hasNostrExtension, setHasNostrExtension] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [relayStatuses, setRelayStatuses] = useState<Record<string, boolean>>({});
+
+  // Connection status & auto-reconnect backoff
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(() => {
+    const savedUser = localStorage.getItem('watchlistr_nostr_user');
+    if (!savedUser) return 'disconnected';
+    try {
+      const u = JSON.parse(savedUser);
+      return u.signerType === 'bunker' ? 'connecting' : 'connected';
+    } catch {
+      return 'disconnected';
+    }
+  });
+  const retryIndexRef = useRef<number>(0);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Modals visibility
   const [isConnectionModalOpen, setIsConnectionModalOpen] = useState(false);
@@ -53,6 +71,11 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
   const [readOnlyInputKey, setReadOnlyInputKey] = useState('');
   const [nostrConnectUri, setNostrConnectUri] = useState<string | null>(null);
   const [isNostrConnectListening, setIsNostrConnectListening] = useState<boolean>(false);
+
+  // Re-pair from scratch state for broken bunker connections
+  const [repairConnectUri, setRepairConnectUri] = useState<string | null>(null);
+  const [isRepairing, setIsRepairing] = useState<boolean>(false);
+  const repairSessionRef = useRef<any>(null);
 
   // Profile Edit state & Deferred Upload with Interactive Crop & Zoom
   const [profileEditName, setProfileEditName] = useState('');
@@ -94,21 +117,28 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
   useEffect(() => {
     if (!nostrUser) {
       activeSignerRef.current = null;
+      setConnectionStatus('disconnected');
       return;
     }
 
     if (nostrUser.signerType === 'extension') {
       activeSignerRef.current = new Nip07Signer();
+      setConnectionStatus('connected');
     } else if (nostrUser.signerType === 'readonly') {
       activeSignerRef.current = new ReadOnlySigner(nostrUser.pubkey);
+      setConnectionStatus('connected');
     } else if (nostrUser.signerType === 'bunker' && nostrUser.bunkerUrl) {
       if (!activeSignerRef.current || (activeSignerRef.current as any).bunkerUrl !== nostrUser.bunkerUrl) {
+        setConnectionStatus('connecting');
         createBunkerSigner(nostrUser.bunkerUrl, nostrUser.bunkerClientSk)
           .then(signer => {
             activeSignerRef.current = signer;
+            setConnectionStatus('connected');
+            retryIndexRef.current = 0;
           })
           .catch(err => {
             console.error("Auto-reconnect NIP-46 Bunker failed:", err);
+            setConnectionStatus('broken');
           });
       }
     }
@@ -117,6 +147,127 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
       onLoginSuccess(nostrUser.pubkey);
     }
   }, [nostrUser?.pubkey, nostrUser?.signerType]);
+
+  const reconnectBunker = useCallback(async (): Promise<boolean> => {
+    if (!nostrUser || nostrUser.signerType !== 'bunker' || !nostrUser.bunkerUrl) {
+      return false;
+    }
+    setConnectionStatus('connecting');
+    try {
+      if (activeSignerRef.current && 'close' in activeSignerRef.current) {
+        try {
+          await (activeSignerRef.current as BunkerNip46Signer).close();
+        } catch (e) {}
+      }
+      const signer = await createBunkerSigner(nostrUser.bunkerUrl, nostrUser.bunkerClientSk);
+      const pk = await signer.getPublicKey();
+      if (pk) {
+        activeSignerRef.current = signer;
+        setConnectionStatus('connected');
+        retryIndexRef.current = 0;
+        return true;
+      }
+      setConnectionStatus('broken');
+      return false;
+    } catch (err) {
+      console.error("Manual reconnect Bunker failed:", err);
+      setConnectionStatus('broken');
+      return false;
+    }
+  }, [nostrUser]);
+
+  // Periodic auto-retry with progressive backoff when connection is broken
+  useEffect(() => {
+    if (connectionStatus !== 'broken' || !nostrUser || nostrUser.signerType !== 'bunker') {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    const intervalSeconds = RETRY_INTERVALS[Math.min(retryIndexRef.current, RETRY_INTERVALS.length - 1)];
+
+    retryTimeoutRef.current = setTimeout(async () => {
+      console.log(`Auto-retry bunker reconnect firing (attempt ${retryIndexRef.current + 1}, interval ${intervalSeconds}s)...`);
+      const success = await reconnectBunker();
+      if (!success) {
+        retryIndexRef.current += 1;
+      }
+    }, intervalSeconds * 1000);
+
+    return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+    };
+  }, [connectionStatus, nostrUser, reconnectBunker]);
+
+  // Trigger immediate reconnect when device comes back online
+  useEffect(() => {
+    const handleOnline = () => {
+      if (connectionStatus === 'broken' && nostrUser?.signerType === 'bunker') {
+        console.log("Network online event detected, attempting immediate bunker reconnect...");
+        reconnectBunker();
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [connectionStatus, nostrUser, reconnectBunker]);
+
+
+  const startRepairSession = useCallback(async (onSuccess?: () => void): Promise<boolean> => {
+    setIsRepairing(true);
+    setRepairConnectUri(null);
+
+    const session = startNostrConnectSession(DEFAULT_RELAYS);
+    repairSessionRef.current = session;
+    setRepairConnectUri(session.uri);
+
+    try {
+      const signer = await session.listen();
+      activeSignerRef.current = signer;
+      const pubkey = await signer.getPublicKey();
+
+      setNostrUser(prev => {
+        const updated: NostrUser = {
+          pubkey: pubkey || prev?.pubkey || '',
+          name: prev?.name,
+          picture: prev?.picture,
+          readOnly: false,
+          signerType: 'bunker',
+          bunkerUrl: signer.bunkerUrl,
+          bunkerClientSk: signer.clientSecretKeyHex
+        };
+        localStorage.setItem('watchlistr_nostr_user', JSON.stringify(updated));
+        return updated;
+      });
+
+      setConnectionStatus('connected');
+      retryIndexRef.current = 0;
+      setRepairConnectUri(null);
+      setIsRepairing(false);
+      repairSessionRef.current = null;
+
+      if (onSuccess) {
+        onSuccess();
+      }
+      return true;
+    } catch (err) {
+      console.error("Re-pairing session failed:", err);
+      setIsRepairing(false);
+      setRepairConnectUri(null);
+      repairSessionRef.current = null;
+      return false;
+    }
+  }, []);
+
+  const cancelRepairSession = useCallback(() => {
+    setIsRepairing(false);
+    setRepairConnectUri(null);
+    repairSessionRef.current = null;
+  }, []);
 
   // Sync fetched profile metadata into profile edit state when modal is open
   useEffect(() => {
@@ -131,10 +282,14 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
     }
   }, [isConnectionModalOpen, isOnboardingOpen, onboardingStep, nostrUser, nostrUser?.name, nostrUser?.picture, selectedImageFile]);
 
-  // Auto-advance onboarding to Step 4 (Profile Setup) when connected in Step 3
+  // Auto-advance onboarding to Step 4 (Profile Setup) ONLY for brand-new users without profile
   useEffect(() => {
     if (isOnboardingOpen && onboardingStep === 3 && nostrUser) {
-      setOnboardingStep(4);
+      if (!nostrUser.name && !nostrUser.picture) {
+        setOnboardingStep(4);
+      } else {
+        setIsOnboardingOpen(false);
+      }
     }
   }, [isOnboardingOpen, onboardingStep, nostrUser]);
 
@@ -151,6 +306,7 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
       if (pubkey) {
         const user: NostrUser = { pubkey, readOnly: false, signerType: 'extension' };
         setNostrUser(user);
+        setConnectionStatus('connected');
         localStorage.setItem('watchlistr_nostr_user', JSON.stringify(user));
         setIsOnboardingOpen(false);
       }
@@ -182,6 +338,8 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
       };
 
       setNostrUser(user);
+      setConnectionStatus('connected');
+      retryIndexRef.current = 0;
       localStorage.setItem('watchlistr_nostr_user', JSON.stringify(user));
       setBunkerInputUrl('');
       setIsOnboardingOpen(false);
@@ -203,6 +361,7 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
     activeSignerRef.current = signer;
     const user: NostrUser = { pubkey: hex, readOnly: true, signerType: 'readonly' };
     setNostrUser(user);
+    setConnectionStatus('connected');
     localStorage.setItem('watchlistr_nostr_user', JSON.stringify(user));
     setReadOnlyInputKey('');
     setIsOnboardingOpen(false);
@@ -224,18 +383,24 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
       activeSignerRef.current = signer;
       const pubkey = await signer.getPublicKey();
 
-      const user: NostrUser = {
-        pubkey,
-        readOnly: false,
-        signerType: 'bunker',
-        bunkerUrl: signer.bunkerUrl,
-        bunkerClientSk: signer.clientSecretKeyHex
-      };
+      setNostrUser(prev => {
+        const updated: NostrUser = {
+          pubkey,
+          name: prev?.name,
+          picture: prev?.picture,
+          readOnly: false,
+          signerType: 'bunker',
+          bunkerUrl: signer.bunkerUrl,
+          bunkerClientSk: signer.clientSecretKeyHex
+        };
+        localStorage.setItem('watchlistr_nostr_user', JSON.stringify(updated));
+        return updated;
+      });
 
-      setNostrUser(user);
-      localStorage.setItem('watchlistr_nostr_user', JSON.stringify(user));
+      setConnectionStatus('connected');
+      retryIndexRef.current = 0;
       setNostrConnectUri(null);
-      if (onboardingStepRef.current === 0 || onboardingStepRef.current === 'expert') {
+      if (onboardingStepRef.current === 0 || onboardingStepRef.current === 'expert' || (nostrUser && (nostrUser.name || nostrUser.picture))) {
         setIsOnboardingOpen(false);
       } else {
         setOnboardingStep(4);
@@ -249,11 +414,18 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
   };
 
   const logoutNostr = () => {
+    cancelRepairSession();
     if (activeSignerRef.current && 'close' in activeSignerRef.current) {
       try {
         (activeSignerRef.current as BunkerNip46Signer).close();
       } catch (e) { }
     }
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+    retryIndexRef.current = 0;
+    setConnectionStatus('disconnected');
     activeSignerRef.current = null;
     setNostrUser(null);
     localStorage.removeItem('watchlistr_nostr_user');
@@ -450,6 +622,14 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
     handleStartNostrConnect,
     logoutNostr,
     handleFileSelection,
-    handlePublishProfile
+    handlePublishProfile,
+    connectionStatus,
+    setConnectionStatus,
+    reconnectBunker,
+    repairConnectUri,
+    isRepairing,
+    startRepairSession,
+    cancelRepairSession
   };
 }
+

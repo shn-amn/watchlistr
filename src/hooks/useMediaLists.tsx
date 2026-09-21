@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Bookmark } from 'lucide-react';
 import type {
   Media,
@@ -7,9 +7,13 @@ import type {
   NewListModalState,
   EditListModalState,
   DeleteListModalState,
-  LogModalState
+  LogModalState,
+  ConnectionStatus,
+  OutboxAction,
+  ToastNotification
 } from '../types';
 import type { NostrService, NostrSigner } from '../nostr';
+import { BunkerTimeoutError } from '../nostr';
 import { cleanListTitle, resolveMediaItems } from '../utils';
 
 export interface UseMediaListsProps {
@@ -20,6 +24,13 @@ export interface UseMediaListsProps {
   onSyncProfile?: (meta: { name?: string; picture?: string }) => void;
   onSyncFollows?: (follows: string[]) => void;
   onSyncBlocks?: (blocks: string[]) => void;
+  connectionStatus?: ConnectionStatus;
+  setConnectionStatus?: React.Dispatch<React.SetStateAction<ConnectionStatus>>;
+  showToast?: (toast: Omit<ToastNotification, 'id'>) => string;
+  outbox?: OutboxAction[];
+  enqueueAction?: (action: Omit<OutboxAction, 'id' | 'timestamp'>) => OutboxAction;
+  removeAction?: (actionId: string) => void;
+  isEntityPending?: (entityId: string) => boolean;
 }
 
 export function useMediaLists({
@@ -29,7 +40,14 @@ export function useMediaLists({
   setIsSyncing,
   onSyncProfile,
   onSyncFollows,
-  onSyncBlocks
+  onSyncBlocks,
+  connectionStatus,
+  setConnectionStatus,
+  showToast,
+  outbox,
+  enqueueAction,
+  removeAction,
+  isEntityPending
 }: UseMediaListsProps) {
   const activeSyncPubkeyRef = React.useRef<string | null>(null);
 
@@ -203,8 +221,26 @@ export function useMediaLists({
     });
   }, []);
 
-  const publishListToNostr = async (list: MediaList) => {
-    if (!nostrUser || nostrUser.readOnly || !nostrServiceRef.current || !activeSignerRef.current) return;
+  const publishListToNostr = async (
+    list: MediaList,
+    previousSnapshot?: MediaList,
+    actionType: 'create' | 'update' = 'update'
+  ) => {
+    if (!nostrUser || nostrUser.readOnly) return;
+
+    // 1. Enqueue action in Outbox (persisted in localStorage)
+    const action = enqueueAction ? enqueueAction({
+      entityType: 'list',
+      entityId: list.id,
+      action: actionType,
+      payload: list,
+      previousSnapshot
+    }) : null;
+
+    // 2. If connection is broken or services are missing, keep in outbox without attempting immediate signing
+    if (connectionStatus === 'broken' || !nostrServiceRef.current || !activeSignerRef.current) {
+      return;
+    }
 
     const iTags = list.items.map(item => {
       const numericId = item.id.includes('-') ? item.id.split('-')[1] : item.id;
@@ -216,7 +252,7 @@ export function useMediaLists({
     });
 
     const unsignedEvent = {
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: list.createdAt || Math.floor(Date.now() / 1000),
       kind: 30016,
       tags: [
         ["d", list.id],
@@ -231,8 +267,31 @@ export function useMediaLists({
       const signedEvent = await activeSignerRef.current.signEvent(unsignedEvent);
       await nostrServiceRef.current.publishEvent(signedEvent);
       setLists(prev => prev.map(l => l.id === list.id ? { ...l, eventId: signedEvent.id } : l));
-    } catch (err) {
-      console.error(`Failed to publish list ${list.id} to Nostr:`, err);
+      if (action) {
+        removeAction?.(action.id);
+      }
+    } catch (err: any) {
+      if (err instanceof BunkerTimeoutError || err?.name === 'BunkerTimeoutError') {
+        console.warn(`Signer timed out while publishing list ${list.id}. Marking connection broken.`);
+        setConnectionStatus?.('broken');
+      } else {
+        console.error(`Failed to publish list ${list.id} to Nostr:`, err);
+        showToast?.({
+          type: 'error',
+          message: `Failed to sign "${list.title}": ${err?.message || 'Signing failed'}`,
+          onRetry: () => {
+            publishListToNostr(list, previousSnapshot, actionType);
+          },
+          onRollback: () => {
+            if (previousSnapshot) {
+              setLists(prev => prev.map(l => l.id === list.id ? previousSnapshot : l));
+            } else if (actionType === 'create') {
+              setLists(prev => prev.filter(l => l.id !== list.id));
+            }
+            if (action) removeAction?.(action.id);
+          }
+        });
+      }
     }
   };
 
@@ -417,7 +476,7 @@ export function useMediaLists({
       setActiveWatchedId(id);
     }
 
-    publishListToNostr(newList);
+    publishListToNostr(newList, undefined, 'create');
 
     setNewListForm({ title: '', description: '' });
     setNewListModal({ isOpen: false, type: 'watched' });
@@ -438,20 +497,36 @@ export function useMediaLists({
     const updatedTitle = editListForm.title.trim();
     const updatedDesc = editListForm.description.trim();
     const targetId = editListModal.list.id;
+    const previousList = editListModal.list;
 
     const updatedList: MediaList = {
       ...editListModal.list,
       title: updatedTitle,
-      description: updatedDesc
+      description: updatedDesc,
+      createdAt: Math.floor(Date.now() / 1000)
     };
 
     setLists(prev => prev.map(l => l.id === targetId ? updatedList : l));
-    publishListToNostr(updatedList);
+    publishListToNostr(updatedList, previousList, 'update');
     setEditListModal({ isOpen: false, list: null });
   };
 
   const deleteListFromNostr = async (list: MediaList) => {
-    if (!nostrUser || nostrUser.readOnly || !nostrServiceRef.current || !activeSignerRef.current) return;
+    if (!nostrUser || nostrUser.readOnly) return;
+
+    // 1. Enqueue deletion action in Outbox
+    const action = enqueueAction ? enqueueAction({
+      entityType: 'list',
+      entityId: list.id,
+      action: 'delete',
+      payload: list,
+      previousSnapshot: list
+    }) : null;
+
+    if (connectionStatus === 'broken' || !nostrServiceRef.current || !activeSignerRef.current) {
+      return;
+    }
+
     try {
       const tags: string[][] = [
         ["a", `30016:${nostrUser.pubkey}:${list.id}`],
@@ -472,7 +547,6 @@ export function useMediaLists({
       await nostrServiceRef.current.publishEvent(signedKind5);
 
       // 2. Also publish a tombstone parameterized replaceable event (kind:30016 with deleted: true)
-      // This ensures relays that don't purge on kind:5 will overwrite the old event data
       try {
         const unsignedTombstone = {
           created_at: Math.floor(Date.now() / 1000) + 1,
@@ -489,10 +563,141 @@ export function useMediaLists({
       } catch (tombstoneErr) {
         console.warn("Could not publish tombstone kind:30016:", tombstoneErr);
       }
-    } catch (err) {
-      console.error(`Failed to publish list deletion for ${list.id}:`, err);
+
+      if (action) {
+        removeAction?.(action.id);
+      }
+    } catch (err: any) {
+      if (err instanceof BunkerTimeoutError || err?.name === 'BunkerTimeoutError') {
+        console.warn(`Signer timed out while deleting list ${list.id}. Marking connection broken.`);
+        setConnectionStatus?.('broken');
+      } else {
+        console.error(`Failed to publish list deletion for ${list.id}:`, err);
+        showToast?.({
+          type: 'error',
+          message: `Failed to delete list "${list.title}": ${err?.message || 'Signing failed'}`,
+          onRetry: () => {
+            deleteListFromNostr(list);
+          },
+          onRollback: () => {
+            setLists(prev => [...prev, list]);
+            if (action) removeAction?.(action.id);
+          }
+        });
+      }
     }
   };
+
+  const isFlushingRef = React.useRef(false);
+  const flushOutbox = useCallback(async () => {
+    if (isFlushingRef.current) return;
+    if (!nostrUser || nostrUser.readOnly || !nostrServiceRef.current || !activeSignerRef.current) return;
+    if (!outbox || outbox.length === 0) return;
+
+    isFlushingRef.current = true;
+    console.log(`[Outbox] Flushing ${outbox.length} pending actions...`);
+
+    for (const item of [...outbox]) {
+      try {
+        if (item.action === 'update' || item.action === 'create') {
+          const list = item.payload as MediaList;
+          const iTags = list.items.map(item => {
+            const numericId = item.id.includes('-') ? item.id.split('-')[1] : item.id;
+            const identifier = `ttvdb:${item.type === 'tv' ? 'series' : 'movie'}:${numericId}`;
+            const urlHint = item.slug ? `https://thetvdb.com/${item.type === 'tv' ? 'series' : 'movies'}/${item.slug}` : "";
+            const datestamp = item.watchedDate || "";
+            const rating = item.userRating !== undefined ? item.userRating.toString() : "";
+            return ["i", identifier, urlHint, datestamp, rating];
+          });
+
+          const unsignedEvent = {
+            created_at: list.createdAt || Math.floor(Date.now() / 1000),
+            kind: 30016,
+            tags: [
+              ["d", list.id],
+              ["title", cleanListTitle(list.title)],
+              ["description", list.description],
+              ...iTags
+            ],
+            content: ""
+          };
+
+          const signedEvent = await activeSignerRef.current.signEvent(unsignedEvent);
+          await nostrServiceRef.current.publishEvent(signedEvent);
+          setLists(prev => prev.map(l => l.id === list.id ? { ...l, eventId: signedEvent.id } : l));
+          removeAction?.(item.id);
+        } else if (item.action === 'delete') {
+          const list = item.payload as MediaList;
+          const tags: string[][] = [
+            ["a", `30016:${nostrUser.pubkey}:${list.id}`],
+            ["d", list.id]
+          ];
+          if (list.eventId) {
+            tags.push(["e", list.eventId]);
+          }
+
+          const unsignedKind5 = {
+            created_at: Math.floor(Date.now() / 1000),
+            kind: 5,
+            tags,
+            content: `Deleted list ${list.title || list.id}`
+          };
+          const signedKind5 = await activeSignerRef.current.signEvent(unsignedKind5);
+          await nostrServiceRef.current.publishEvent(signedKind5);
+
+          try {
+            const unsignedTombstone = {
+              created_at: Math.floor(Date.now() / 1000) + 1,
+              kind: 30016,
+              tags: [
+                ["d", list.id],
+                ["title", list.title || list.id],
+                ["deleted", "true"]
+              ],
+              content: ""
+            };
+            const signedTombstone = await activeSignerRef.current.signEvent(unsignedTombstone);
+            await nostrServiceRef.current.publishEvent(signedTombstone);
+          } catch (e) {}
+
+          removeAction?.(item.id);
+        }
+      } catch (err: any) {
+        if (err instanceof BunkerTimeoutError || err?.name === 'BunkerTimeoutError') {
+          console.warn("[Outbox] Timeout occurred during flush. Pausing flush.");
+          setConnectionStatus?.('broken');
+          break;
+        } else {
+          console.error("[Outbox] Signer error during flush:", err);
+          showToast?.({
+            type: 'error',
+            message: `Failed to sync "${item.payload?.title || item.entityId}": ${err?.message || 'Signing failed'}`,
+            onRetry: () => {
+              flushOutbox();
+            },
+            onRollback: () => {
+              if (item.previousSnapshot) {
+                setLists(prev => prev.map(l => l.id === item.entityId ? item.previousSnapshot : l));
+              } else if (item.action === 'create') {
+                setLists(prev => prev.filter(l => l.id !== item.entityId));
+              }
+              removeAction?.(item.id);
+            }
+          });
+          break;
+        }
+      }
+    }
+    isFlushingRef.current = false;
+  }, [nostrUser, nostrServiceRef, activeSignerRef, outbox, removeAction, setConnectionStatus, showToast]);
+
+  // Auto-flush when connection becomes connected and outbox has pending items
+  useEffect(() => {
+    if (connectionStatus === 'connected' && outbox && outbox.length > 0) {
+      flushOutbox();
+    }
+  }, [connectionStatus, outbox, flushOutbox]);
+
 
   const confirmDeleteList = (list: MediaList) => {
     setDeleteListModal({ isOpen: true, list });
@@ -556,17 +761,19 @@ export function useMediaLists({
 
   const addToWatchlist = (item: Media, targetListId: string = activeWatchlistId) => {
     let updatedList: MediaList | null = null;
+    let previousSnapshot: MediaList | undefined = undefined;
     setLists(prev => {
       const next = prev.map(list => {
         if (list.id === targetListId) {
           if (list.items.some(x => x.id === item.id)) return list;
+          previousSnapshot = list;
           updatedList = { ...list, items: [item, ...list.items], createdAt: Math.floor(Date.now() / 1000) };
           return updatedList;
         }
         return list;
       });
       if (updatedList) {
-        publishListToNostr(updatedList);
+        publishListToNostr(updatedList, previousSnapshot);
       }
       return next;
     });
@@ -656,17 +863,21 @@ export function useMediaLists({
 
     const targetListId = logModal.targetListId || activeWatchedId;
     let updatedWatchlist: MediaList | null = null;
+    let prevWatchlist: MediaList | undefined = undefined;
     let updatedWatchedlist: MediaList | null = null;
+    let prevWatchedlist: MediaList | undefined = undefined;
 
     setLists(prev => {
       const next = prev.map(list => {
         if (list.type === 'watchlist') {
           if (list.items.some(x => x.id === updatedItem.id)) {
+            prevWatchlist = list;
             updatedWatchlist = { ...list, items: list.items.filter(x => x.id !== updatedItem.id), createdAt: Math.floor(Date.now() / 1000) };
             return updatedWatchlist;
           }
         }
         if (list.id === targetListId) {
+          prevWatchedlist = list;
           const exists = list.items.some(x => x.id === updatedItem.id);
           const filtered = list.items.filter(x => x.id !== updatedItem.id);
           updatedWatchedlist = {
@@ -681,8 +892,8 @@ export function useMediaLists({
         return list;
       });
 
-      if (updatedWatchlist) publishListToNostr(updatedWatchlist);
-      if (updatedWatchedlist) publishListToNostr(updatedWatchedlist);
+      if (updatedWatchlist) publishListToNostr(updatedWatchlist, prevWatchlist);
+      if (updatedWatchedlist) publishListToNostr(updatedWatchedlist, prevWatchedlist);
 
       return next;
     });
@@ -702,16 +913,18 @@ export function useMediaLists({
 
   const removeFromWatchlist = (id: string, listId: string = activeWatchlistId) => {
     let updatedList: MediaList | null = null;
+    let previousSnapshot: MediaList | undefined = undefined;
     setLists(prev => {
       const next = prev.map(list => {
         if (list.id === listId) {
+          previousSnapshot = list;
           updatedList = { ...list, items: list.items.filter(x => x.id !== id), createdAt: Math.floor(Date.now() / 1000) };
           return updatedList;
         }
         return list;
       });
       if (updatedList) {
-        publishListToNostr(updatedList);
+        publishListToNostr(updatedList, previousSnapshot);
       }
       return next;
     });
@@ -719,16 +932,18 @@ export function useMediaLists({
 
   const removeFromWatched = (id: string, listId: string = activeWatchedId) => {
     let updatedList: MediaList | null = null;
+    let previousSnapshot: MediaList | undefined = undefined;
     setLists(prev => {
       const next = prev.map(list => {
         if (list.id === listId) {
+          previousSnapshot = list;
           updatedList = { ...list, items: list.items.filter(x => x.id !== id), createdAt: Math.floor(Date.now() / 1000) };
           return updatedList;
         }
         return list;
       });
       if (updatedList) {
-        publishListToNostr(updatedList);
+        publishListToNostr(updatedList, previousSnapshot);
       }
       return next;
     });
@@ -805,6 +1020,9 @@ export function useMediaLists({
     syncFromNostr,
     publishListToNostr,
     deleteListFromNostr,
-    resetListsOnLogout
+    resetListsOnLogout,
+    flushOutbox,
+    isEntityPending
   };
 }
+

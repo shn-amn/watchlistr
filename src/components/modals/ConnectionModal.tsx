@@ -1,6 +1,7 @@
 import React from 'react';
-import { Copy, LogOut, RefreshCw, Upload, X } from 'lucide-react';
-import type { NostrUser } from '../../types';
+import { AlertTriangle, Copy, LogOut, QrCode, RefreshCw, Smartphone, Upload, X } from 'lucide-react';
+import type { NostrUser, ConnectionStatus } from '../../types';
+import { detectDeviceType } from '../../utils';
 
 interface ConnectionModalProps {
   isOpen: boolean;
@@ -28,6 +29,12 @@ interface ConnectionModalProps {
   handleFileSelection: (f: File) => void;
   handlePublishProfile: (e: React.FormEvent) => void;
   logoutNostr: () => void;
+  connectionStatus?: ConnectionStatus;
+  onReconnect?: () => Promise<boolean>;
+  repairConnectUri?: string | null;
+  isRepairing?: boolean;
+  onStartRepair?: () => void;
+  onCancelRepair?: () => void;
 }
 
 export const ConnectionModal: React.FC<ConnectionModalProps> = ({
@@ -55,9 +62,20 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   setProfileStatus,
   handleFileSelection,
   handlePublishProfile,
-  logoutNostr
+  logoutNostr,
+  connectionStatus,
+  onReconnect,
+  repairConnectUri,
+  isRepairing,
+  onStartRepair,
+  onCancelRepair
 }) => {
+  const [isQuickReconnecting, setIsQuickReconnecting] = React.useState(false);
+
   if (!isOpen) return null;
+
+  const showReconnectionCard = (connectionStatus === 'broken' || connectionStatus === 'connecting' || isQuickReconnecting || isRepairing) && nostrUser?.signerType === 'bunker';
+  const isConnecting = connectionStatus === 'connecting' || isQuickReconnecting;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -70,6 +88,151 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
         </div>
 
         <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {/* Dedicated Broken Connection & Reconnect / Re-pair Card */}
+          {showReconnectionCard && (
+            <div style={{
+              backgroundColor: 'rgba(239, 68, 68, 0.08)',
+              border: '1px solid rgba(239, 68, 68, 0.25)',
+              borderRadius: 'var(--radius-md)',
+              padding: '1rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.75rem'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertTriangle size={18} style={{ color: '#ef4444' }} />
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#ef4444' }}>
+                  Remote Signer Disconnected
+                </div>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                The connection to your remote signer was interrupted or timed out. You can attempt a quick reconnect, or re-pair from scratch if Watchlistr was removed from your remote signer app.
+              </div>
+
+              {!repairConnectUri && !isRepairing ? (
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={isConnecting}
+                    onClick={async () => {
+                      if (onReconnect) {
+                        setIsQuickReconnecting(true);
+                        try {
+                          await onReconnect();
+                        } finally {
+                          setIsQuickReconnecting(false);
+                        }
+                      }
+                    }}
+                    style={{ flex: 1, justifyContent: 'center', padding: '0.6rem', fontSize: '0.85rem' }}
+                  >
+                    <RefreshCw size={14} className={isConnecting ? 'spin' : ''} />
+                    {isConnecting ? 'Reconnecting...' : 'Quick Reconnect'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => onStartRepair?.()}
+                    style={{ flex: 1, justifyContent: 'center', padding: '0.6rem', fontSize: '0.85rem' }}
+                  >
+                    <QrCode size={14} /> Re-pair from Scratch
+                  </button>
+                </div>
+              ) : (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '0.75rem',
+                  marginTop: '0.25rem',
+                  padding: '1rem',
+                  backgroundColor: 'var(--bg-primary)',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-color)',
+                  width: '100%'
+                }}>
+                  {repairConnectUri ? (
+                    detectDeviceType() === 'android' || detectDeviceType() === 'ios' ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', width: '100%' }}>
+                        <a
+                          href={repairConnectUri}
+                          className="btn btn-primary"
+                          style={{
+                            width: '100%',
+                            padding: '0.75rem',
+                            justifyContent: 'center',
+                            textDecoration: 'none',
+                            color: '#ffffff',
+                            fontWeight: 700,
+                            fontSize: '0.95rem'
+                          }}
+                        >
+                          <Smartphone size={16} /> Open in Signer App (Amber)
+                        </a>
+                        <button
+                          type="button"
+                          className="btn btn-small"
+                          onClick={() => {
+                            navigator.clipboard.writeText(repairConnectUri);
+                            alert("Connection URI copied to clipboard!");
+                          }}
+                          style={{ justifyContent: 'center' }}
+                        >
+                          <Copy size={13} /> Copy Connection URI
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.6rem' }}>
+                        <div style={{ backgroundColor: '#ffffff', padding: '10px', borderRadius: 'var(--radius-md)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=170x170&data=${encodeURIComponent(repairConnectUri)}`}
+                            alt="Reconnect QR Code"
+                            width={170}
+                            height={170}
+                            style={{ display: 'block' }}
+                          />
+                        </div>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                          Scan with your signer app (e.g. Amber) to approve pairing
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-small"
+                          onClick={() => {
+                            navigator.clipboard.writeText(repairConnectUri);
+                            alert("Connection URI copied to clipboard!");
+                          }}
+                        >
+                          <Copy size={12} /> Copy Connection URI
+                        </button>
+                      </div>
+                    )
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '1rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                      <RefreshCw size={16} className="spin" /> Generating pairing session...
+                    </div>
+                  )}
+
+                  {repairConnectUri && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                      <RefreshCw size={13} className="spin" /> Waiting for authorization...
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-small"
+                    onClick={() => onCancelRepair?.()}
+                    style={{ marginTop: '0.25rem' }}
+                  >
+                    Cancel Re-pairing
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Profile Setup Form */}
           <form onSubmit={handlePublishProfile} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
@@ -304,11 +467,40 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Connection Type</span>
               <div>
-                {nostrUser?.signerType === 'bunker' && <span className="bunker-badge" style={{ margin: 0 }}>NIP-46 Remote Signer</span>}
+                {nostrUser?.signerType === 'bunker' && (
+                  connectionStatus === 'broken' ? (
+                    <span
+                      className="bunker-badge"
+                      style={{
+                        margin: 0,
+                        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                        color: '#ef4444',
+                        borderColor: 'rgba(239, 68, 68, 0.3)'
+                      }}
+                    >
+                      NIP-46 Disconnected
+                    </span>
+                  ) : connectionStatus === 'connecting' ? (
+                    <span
+                      className="bunker-badge"
+                      style={{
+                        margin: 0,
+                        backgroundColor: 'rgba(234, 179, 8, 0.15)',
+                        color: '#eab308',
+                        borderColor: 'rgba(234, 179, 8, 0.3)'
+                      }}
+                    >
+                      NIP-46 Connecting...
+                    </span>
+                  ) : (
+                    <span className="bunker-badge" style={{ margin: 0 }}>NIP-46 Remote Signer</span>
+                  )
+                )}
                 {nostrUser?.signerType === 'extension' && <span className="bunker-badge" style={{ backgroundColor: 'var(--accent-color)', color: '#fff', margin: 0 }}>Extension (NIP-07)</span>}
                 {nostrUser?.readOnly && <span className="read-only-badge" style={{ margin: 0 }}>Read-Only Mode</span>}
               </div>
             </div>
+
 
             <div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '0.25rem' }}>Public Key (npub)</div>

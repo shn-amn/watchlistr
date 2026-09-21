@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
-import { User, Globe, Users, RefreshCw, Plus, UserPlus, UserMinus } from 'lucide-react';
-import type { MediaList, NostrUser } from '../types';
+import { User, Globe, Users, RefreshCw, Plus, UserPlus, UserMinus, CloudOff } from 'lucide-react';
+import type { MediaList, NostrUser, ConnectionStatus } from '../types';
 import { renderListTitle } from '../utils';
 import { HeaderBar, ListCardPosterStrip } from '../components/common';
 
@@ -10,6 +10,8 @@ export interface HubViewProps {
   onOpenSettings: () => void;
   onOpenConnection: () => void;
   onOpenLogin: () => void;
+  connectionStatus?: ConnectionStatus;
+  isEntityPending?: (entityId: string) => boolean;
 
   activeHubTab: 'my-lists' | 'explore' | 'following';
   setActiveHubTab: (tab: 'my-lists' | 'explore' | 'following') => void;
@@ -47,6 +49,8 @@ export const HubView: React.FC<HubViewProps> = ({
   onOpenSettings,
   onOpenConnection,
   onOpenLogin,
+  connectionStatus,
+  isEntityPending,
   activeHubTab,
   setActiveHubTab,
   lists,
@@ -92,6 +96,7 @@ export const HubView: React.FC<HubViewProps> = ({
         onOpenSettings={onOpenSettings}
         onOpenConnection={onOpenConnection}
         onOpenLogin={onOpenLogin}
+        connectionStatus={connectionStatus}
       />
 
       {/* Hub Navigation Tabs */}
@@ -265,7 +270,29 @@ export const HubView: React.FC<HubViewProps> = ({
                 className="list-card"
                 onClick={() => onOpenWatchlist(list.id)}
               >
-                <h3 className="list-card-title" style={{ marginTop: '0.25rem' }}>{renderListTitle(list)}</h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginTop: '0.25rem' }}>
+                  <h3 className="list-card-title" style={{ margin: 0 }}>{renderListTitle(list)}</h3>
+                  {isEntityPending?.(list.id) && (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontSize: '0.72rem',
+                        color: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        border: '1px solid rgba(239, 68, 68, 0.25)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '1px 5px',
+                        flexShrink: 0
+                      }}
+                      title="Unsynced changes — will sync when connected"
+                    >
+                      <CloudOff size={13} />
+                      <span>Unsynced</span>
+                    </span>
+                  )}
+                </div>
                 <p className="list-card-desc">{list.description || 'No description provided.'}</p>
 
                 <div className="list-card-footer">

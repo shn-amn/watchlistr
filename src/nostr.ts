@@ -59,6 +59,13 @@ export class ReadOnlySigner implements NostrSigner {
   }
 }
 
+export class BunkerTimeoutError extends Error {
+  constructor(message = "Remote signer request timed out after 15s. Connection may be broken.") {
+    super(message);
+    this.name = "BunkerTimeoutError";
+  }
+}
+
 export class BunkerNip46Signer implements NostrSigner {
   type: 'bunker' = 'bunker';
   private bunkerSigner: BunkerSigner;
@@ -80,8 +87,15 @@ export class BunkerNip46Signer implements NostrSigner {
     return pk;
   }
 
-  async signEvent(unsignedEvent: any): Promise<NostrEvent> {
-    return await this.bunkerSigner.signEvent(unsignedEvent);
+  async signEvent(unsignedEvent: any, timeoutMs = 15000): Promise<NostrEvent> {
+    return await Promise.race([
+      this.bunkerSigner.signEvent(unsignedEvent),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new BunkerTimeoutError(`Remote signer request timed out after ${timeoutMs / 1000}s`));
+        }, timeoutMs);
+      })
+    ]);
   }
 
   async close(): Promise<void> {
