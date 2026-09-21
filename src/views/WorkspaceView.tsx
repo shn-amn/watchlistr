@@ -9,7 +9,9 @@ import {
   ArrowUpDown,
   ChevronDown,
   Check,
-  Filter
+  Filter,
+  Calendar,
+  X
 } from 'lucide-react';
 import type {
   Media,
@@ -30,7 +32,11 @@ import {
   matchesRatingRange,
   matchesType,
   isWatchedFilterActive,
-  getActiveFilterCount
+  getActiveFilterCount,
+  isDateFilterActive,
+  formatDateRangeSummary,
+  formatCompactDateRangeSummary,
+  formatCompactRatingRange
 } from '../utils';
 import { HeaderBar } from '../components/common';
 import { WatchedFilterModal } from '../components/modals';
@@ -115,7 +121,12 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
   useEffect(() => {
     if (!isFilterModalOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (filterMenuRef.current && !filterMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as HTMLElement;
+      if (
+        filterMenuRef.current &&
+        !filterMenuRef.current.contains(target) &&
+        !target.closest?.('.toolbar-active-filter-pill')
+      ) {
         setIsFilterModalOpen(false);
       }
     };
@@ -297,35 +308,146 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = ({
               return (
                 <>
                   <div className="media-toolbar-row">
-                    {/* Left: Type Filter Chips (Watchlist) or Filter Button (Watched) */}
+                    {/* Left: Type Filter Chips (Watchlist) or Filter Button + Active Badges (Watched) */}
                     {currentList.type === 'watched' ? (
-                      <div className="filter-menu-container" ref={filterMenuRef}>
-                        <button
-                          type="button"
-                          className={`sort-dropdown-wrapper filter-dropdown-wrapper ${isWatchedFilterActive(watchedFilters) ? 'active' : ''}`}
-                          onClick={() => setIsFilterModalOpen(prev => !prev)}
-                          title="Filter watched list"
-                        >
-                          <Filter size={12} className="sort-icon" />
-                          <span className="sort-label">Filter</span>
-                          {getActiveFilterCount(watchedFilters) > 0 && (
-                            <span className="filter-chip-count filter-toolbar-count">
-                              {getActiveFilterCount(watchedFilters)}
-                            </span>
-                          )}
-                          <ChevronDown size={11} className="sort-chevron" />
-                        </button>
+                      <div className="watched-toolbar-controls">
+                        <div className="filter-menu-container" ref={filterMenuRef}>
+                          <button
+                            type="button"
+                            className={`sort-dropdown-wrapper filter-dropdown-wrapper ${isWatchedFilterActive(watchedFilters) ? 'active' : ''}`}
+                            onClick={() => setIsFilterModalOpen(prev => !prev)}
+                            title="Filter watched list"
+                          >
+                            <Filter size={12} className="sort-icon" />
+                            <span className="sort-label">Filter</span>
+                            {getActiveFilterCount(watchedFilters) > 0 && (
+                              <span className="filter-chip-count filter-toolbar-count">
+                                {getActiveFilterCount(watchedFilters)}
+                              </span>
+                            )}
+                            <ChevronDown size={11} className="sort-chevron" />
+                          </button>
 
-                        <WatchedFilterModal
-                          isOpen={isFilterModalOpen}
-                          onClose={() => setIsFilterModalOpen(false)}
-                          filters={watchedFilters}
-                          onChangeFilters={setWatchedFilters}
-                          movieCount={movieCount}
-                          tvCount={tvCount}
-                          totalCount={currentList.items.length}
-                          matchedCount={processedItems.length}
-                        />
+                          <WatchedFilterModal
+                            isOpen={isFilterModalOpen}
+                            onClose={() => setIsFilterModalOpen(false)}
+                            filters={watchedFilters}
+                            onChangeFilters={setWatchedFilters}
+                            movieCount={movieCount}
+                            tvCount={tvCount}
+                            totalCount={currentList.items.length}
+                            matchedCount={processedItems.length}
+                            items={currentList.items}
+                          />
+                        </div>
+
+                        {/* Active Filter Badges Container (scrolls smoothly on narrow screens) */}
+                        {isWatchedFilterActive(watchedFilters) && (
+                          <div className="toolbar-active-pills-container">
+                            {/* Active Date Filter Pill */}
+                            {isDateFilterActive(watchedFilters.from, watchedFilters.to) && (
+                              <div
+                                className="toolbar-active-filter-pill"
+                                onClick={() => setIsFilterModalOpen(true)}
+                                title={`Active date filter: ${formatDateRangeSummary(watchedFilters.from, watchedFilters.to)} (click to edit)`}
+                              >
+                                <Calendar size={11} className="toolbar-pill-icon" />
+                                <span className="toolbar-pill-text">
+                                  {formatCompactDateRangeSummary(watchedFilters.from, watchedFilters.to)}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="toolbar-pill-clear"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setWatchedFilters({
+                                      ...watchedFilters,
+                                      from: { year: '', month: '', day: '' },
+                                      to: { year: '', month: '', day: '' }
+                                    });
+                                  }}
+                                  title="Clear date filter"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Active Rating Filter Pill */}
+                            {(watchedFilters.minRating > 1 || watchedFilters.maxRating < 10) && (
+                              <div
+                                className="toolbar-active-filter-pill"
+                                onClick={() => setIsFilterModalOpen(true)}
+                                title={`Active rating filter: ${watchedFilters.minRating}★ – ${watchedFilters.maxRating}★ (click to edit)`}
+                              >
+                                <span className="toolbar-pill-text">
+                                  {formatCompactRatingRange(watchedFilters.minRating, watchedFilters.maxRating)}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="toolbar-pill-clear"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setWatchedFilters({
+                                      ...watchedFilters,
+                                      minRating: 1,
+                                      maxRating: 10
+                                    });
+                                  }}
+                                  title="Clear rating filter"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Active Type Filter Pill (Movies) */}
+                            {watchedFilters.showMovies && !watchedFilters.showTv && (
+                              <div
+                                className="toolbar-active-filter-pill"
+                                onClick={() => setIsFilterModalOpen(true)}
+                                title="Filter: Movies only"
+                              >
+                                <Film size={11} className="toolbar-pill-icon" />
+                                <span className="toolbar-pill-text">Movies</span>
+                                <button
+                                  type="button"
+                                  className="toolbar-pill-clear"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setWatchedFilters({ ...watchedFilters, showMovies: false });
+                                  }}
+                                  title="Clear movies filter"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Active Type Filter Pill (TV Shows) */}
+                            {watchedFilters.showTv && !watchedFilters.showMovies && (
+                              <div
+                                className="toolbar-active-filter-pill"
+                                onClick={() => setIsFilterModalOpen(true)}
+                                title="Filter: TV Shows only"
+                              >
+                                <Tv size={11} className="toolbar-pill-icon" />
+                                <span className="toolbar-pill-text">TV</span>
+                                <button
+                                  type="button"
+                                  className="toolbar-pill-clear"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setWatchedFilters({ ...watchedFilters, showTv: false });
+                                  }}
+                                  title="Clear TV filter"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="filter-chips-group">

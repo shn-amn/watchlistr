@@ -1,8 +1,18 @@
-import React from 'react';
-import { Film, Tv, Filter, X, RotateCcw } from 'lucide-react';
-import type { WatchedFiltersState } from '../../types';
-import { getDayOptions, getRatingEmoji, getYearOptions } from '../../utils';
-import { DEFAULT_WATCHED_FILTERS, isWatchedFilterActive, getActiveFilterCount } from '../../utils/filter';
+import React, { useState } from 'react';
+import { Film, Tv, Filter, X, RotateCcw, Calendar } from 'lucide-react';
+import type { Media, WatchedFiltersState } from '../../types';
+import {
+  formatDateRangeSummary,
+  formatSingleDateFilter,
+  getRatingEmoji
+} from '../../utils';
+import {
+  DEFAULT_WATCHED_FILTERS,
+  isWatchedFilterActive,
+  getActiveFilterCount,
+  isDateFilterActive
+} from '../../utils/filter';
+import { FlexibleCalendar, type DatePrecisionValue } from '../common/FlexibleCalendar';
 
 export interface WatchedFilterModalProps {
   isOpen: boolean;
@@ -13,6 +23,7 @@ export interface WatchedFilterModalProps {
   tvCount: number;
   totalCount: number;
   matchedCount: number;
+  items?: Media[];
 }
 
 export const WatchedFilterModal: React.FC<WatchedFilterModalProps> = ({
@@ -23,26 +34,105 @@ export const WatchedFilterModal: React.FC<WatchedFilterModalProps> = ({
   movieCount,
   tvCount,
   totalCount,
-  matchedCount
+  matchedCount,
+  items
 }) => {
+  const [activeBoundary, setActiveBoundary] = useState<'from' | 'to' | null>(null);
+
+  // Reset calendar expansion when modal closes
+  React.useEffect(() => {
+    if (!isOpen) {
+      setActiveBoundary(null);
+    }
+  }, [isOpen]);
+
+  const now = new Date();
+  const currentYear = String(now.getFullYear());
+  const lastYear = String(now.getFullYear() - 1);
+  const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+
+  // Compute earliest registered watchedDate in current list items
+  const minDateFromList = React.useMemo<DatePrecisionValue | undefined>(() => {
+    if (!items || items.length === 0) return undefined;
+    const dates = items
+      .map((item) => item.watchedDate)
+      .filter((d): d is string => Boolean(d && /^\d{4}/.test(d.trim())))
+      .sort();
+    if (dates.length === 0) return undefined;
+    const earliest = dates[0].trim();
+    const parts = earliest.split('-');
+    return {
+      year: parts[0] || '',
+      month: parts[1] || '',
+      day: parts[2] || ''
+    };
+  }, [items]);
+
+  // Max date is today
+  const todayMaxDate = React.useMemo<DatePrecisionValue>(() => {
+    const d = new Date();
+    return {
+      year: String(d.getFullYear()),
+      month: String(d.getMonth() + 1).padStart(2, '0'),
+      day: String(d.getDate()).padStart(2, '0')
+    };
+  }, []);
+
+  // Compute effective boundaries for active calendar tab
+  const effectiveMinDate = activeBoundary === 'from'
+    ? minDateFromList
+    : (filters.from.year ? filters.from : minDateFromList);
+
+  const effectiveMaxDate = activeBoundary === 'from'
+    ? (filters.to.year ? filters.to : todayMaxDate)
+    : todayMaxDate;
+
   if (!isOpen) return null;
 
   const activeCount = getActiveFilterCount(filters);
   const isAnyFilterActive = isWatchedFilterActive(filters);
+  const isDateActive = isDateFilterActive(filters.from, filters.to);
 
-  const handleResetAll = () => {
-    onChangeFilters(DEFAULT_WATCHED_FILTERS);
-  };
-
-  const handleSetTodayForTo = () => {
-    const now = new Date();
-    const y = String(now.getFullYear());
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
+  // Preset Handlers
+  const handleClearAllDate = () => {
+    setActiveBoundary(null);
     onChangeFilters({
       ...filters,
-      to: { year: y, month: m, day: d }
+      from: { year: '', month: '', day: '' },
+      to: { year: '', month: '', day: '' }
     });
+  };
+
+  const handlePresetThisYear = () => {
+    setActiveBoundary(null);
+    onChangeFilters({
+      ...filters,
+      from: { year: currentYear, month: '', day: '' },
+      to: { year: currentYear, month: '', day: '' }
+    });
+  };
+
+  const handlePresetLastYear = () => {
+    setActiveBoundary(null);
+    onChangeFilters({
+      ...filters,
+      from: { year: lastYear, month: '', day: '' },
+      to: { year: lastYear, month: '', day: '' }
+    });
+  };
+
+  const handlePresetThisMonth = () => {
+    setActiveBoundary(null);
+    onChangeFilters({
+      ...filters,
+      from: { year: currentYear, month: currentMonth, day: '' },
+      to: { year: currentYear, month: currentMonth, day: '' }
+    });
+  };
+
+  const handleResetAll = () => {
+    setActiveBoundary(null);
+    onChangeFilters(DEFAULT_WATCHED_FILTERS);
   };
 
   const handleMinRatingChange = (val: number) => {
@@ -61,9 +151,58 @@ export const WatchedFilterModal: React.FC<WatchedFilterModalProps> = ({
     });
   };
 
-  // Compute percentage positions for active dual slider track
+  const handleCalendarChange = (val: DatePrecisionValue) => {
+    if (activeBoundary === 'from') {
+      onChangeFilters({
+        ...filters,
+        from: {
+          year: val.year || '',
+          month: val.month || '',
+          day: val.day || ''
+        }
+      });
+    } else if (activeBoundary === 'to') {
+      onChangeFilters({
+        ...filters,
+        to: {
+          year: val.year || '',
+          month: val.month || '',
+          day: val.day || ''
+        }
+      });
+    }
+  };
+
+  // Active preset checks
+  const isThisYearActive =
+    filters.from.year === currentYear &&
+    filters.to.year === currentYear &&
+    !filters.from.month &&
+    !filters.to.month;
+
+  const isLastYearActive =
+    filters.from.year === lastYear &&
+    filters.to.year === lastYear &&
+    !filters.from.month &&
+    !filters.to.month;
+
+  const isThisMonthActive =
+    filters.from.year === currentYear &&
+    filters.to.year === currentYear &&
+    filters.from.month === currentMonth &&
+    filters.to.month === currentMonth &&
+    !filters.from.day &&
+    !filters.to.day;
+
+  // Percentage positions for dual slider track
   const minPercent = ((filters.minRating - 1) / 9) * 100;
   const maxPercent = ((filters.maxRating - 1) / 9) * 100;
+
+  const dateSummary = formatDateRangeSummary(filters.from, filters.to);
+  const fromSummary = formatSingleDateFilter(filters.from) || 'Any start date';
+  const toSummary = formatSingleDateFilter(filters.to) || 'Today';
+
+  const activeValue = activeBoundary === 'from' ? filters.from : filters.to;
 
   return (
     <div className="filter-popover-backdrop" onClick={onClose}>
@@ -126,179 +265,127 @@ export const WatchedFilterModal: React.FC<WatchedFilterModalProps> = ({
             </div>
           </div>
 
-          {/* 2. Date Watched Range */}
+          {/* 2. Date Watched Range with Visual Flexible Calendar */}
           <div className="filter-row">
             <div className="filter-row-header-inline">
-              <div className="filter-row-label">Date Watched Range</div>
-              {(filters.from.year || filters.to.year) && (
-                <button
-                  type="button"
-                  className="filter-btn-subreset"
-                  onClick={() => onChangeFilters({
-                    ...filters,
-                    from: { year: '', month: '', day: '' },
-                    to: { year: '', month: '', day: '' }
-                  })}
-                >
-                  Clear dates
-                </button>
-              )}
-            </div>
-
-            {/* From Date */}
-            <div className="filter-date-row">
-              <span className="filter-date-prefix">From</span>
-              <div className="filter-date-selects">
-                <select
-                  className="input-field select-field filter-date-select"
-                  value={filters.from.year}
-                  onChange={(e) => onChangeFilters({
-                    ...filters,
-                    from: { ...filters.from, year: e.target.value, month: '', day: '' }
-                  })}
-                >
-                  <option value="">Year...</option>
-                  {getYearOptions(filters.from.year).map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-
-                <select
-                  className="input-field select-field filter-date-select"
-                  value={filters.from.month}
-                  disabled={!filters.from.year}
-                  onChange={(e) => onChangeFilters({
-                    ...filters,
-                    from: { ...filters.from, month: e.target.value, day: '' }
-                  })}
-                >
-                  <option value="">Month...</option>
-                  <option value="01">Jan</option>
-                  <option value="02">Feb</option>
-                  <option value="03">Mar</option>
-                  <option value="04">Apr</option>
-                  <option value="05">May</option>
-                  <option value="06">Jun</option>
-                  <option value="07">Jul</option>
-                  <option value="08">Aug</option>
-                  <option value="09">Sep</option>
-                  <option value="10">Oct</option>
-                  <option value="11">Nov</option>
-                  <option value="12">Dec</option>
-                </select>
-
-                <select
-                  className="input-field select-field filter-date-select"
-                  value={filters.from.day}
-                  disabled={!filters.from.year || !filters.from.month}
-                  onChange={(e) => onChangeFilters({
-                    ...filters,
-                    from: { ...filters.from, day: e.target.value }
-                  })}
-                >
-                  <option value="">Day...</option>
-                  {getDayOptions(filters.from.year, filters.from.month).map(d => (
-                    <option key={d.value} value={d.value}>{d.label}</option>
-                  ))}
-                </select>
-
-                {filters.from.year && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Calendar size={13} style={{ color: 'var(--accent-color)' }} />
+                <span className="filter-row-label" style={{ margin: 0 }}>Date Watched</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {isDateActive ? (
+                  <span className="filter-range-summary-badge" title="Active Date Range">
+                    {dateSummary}
+                  </span>
+                ) : (
+                  <span className="filter-range-summary-dim">All Time</span>
+                )}
+                {isDateActive && (
                   <button
                     type="button"
-                    className="filter-btn-date-clear"
-                    onClick={() => onChangeFilters({
-                      ...filters,
-                      from: { year: '', month: '', day: '' }
-                    })}
-                    title="Clear From date"
+                    className="filter-btn-subreset"
+                    onClick={handleClearAllDate}
+                    title="Clear date range"
                   >
-                    <X size={12} />
+                    Clear
                   </button>
                 )}
               </div>
             </div>
 
-            {/* To Date */}
-            <div className="filter-date-row">
-              <span className="filter-date-prefix">To</span>
-              <div className="filter-date-selects">
-                <select
-                  className="input-field select-field filter-date-select"
-                  value={filters.to.year}
-                  onChange={(e) => onChangeFilters({
-                    ...filters,
-                    to: { ...filters.to, year: e.target.value, month: '', day: '' }
-                  })}
-                >
-                  <option value="">Year...</option>
-                  {getYearOptions(filters.to.year).map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-
-                <select
-                  className="input-field select-field filter-date-select"
-                  value={filters.to.month}
-                  disabled={!filters.to.year}
-                  onChange={(e) => onChangeFilters({
-                    ...filters,
-                    to: { ...filters.to, month: e.target.value, day: '' }
-                  })}
-                >
-                  <option value="">Month...</option>
-                  <option value="01">Jan</option>
-                  <option value="02">Feb</option>
-                  <option value="03">Mar</option>
-                  <option value="04">Apr</option>
-                  <option value="05">May</option>
-                  <option value="06">Jun</option>
-                  <option value="07">Jul</option>
-                  <option value="08">Aug</option>
-                  <option value="09">Sep</option>
-                  <option value="10">Oct</option>
-                  <option value="11">Nov</option>
-                  <option value="12">Dec</option>
-                </select>
-
-                <select
-                  className="input-field select-field filter-date-select"
-                  value={filters.to.day}
-                  disabled={!filters.to.year || !filters.to.month}
-                  onChange={(e) => onChangeFilters({
-                    ...filters,
-                    to: { ...filters.to, day: e.target.value }
-                  })}
-                >
-                  <option value="">Day...</option>
-                  {getDayOptions(filters.to.year, filters.to.month).map(d => (
-                    <option key={d.value} value={d.value}>{d.label}</option>
-                  ))}
-                </select>
-
-                <button
-                  type="button"
-                  className="filter-btn-today"
-                  onClick={handleSetTodayForTo}
-                  title="Set To date to Today"
-                >
-                  Today
-                </button>
-
-                {filters.to.year && (
-                  <button
-                    type="button"
-                    className="filter-btn-date-clear"
-                    onClick={() => onChangeFilters({
-                      ...filters,
-                      to: { year: '', month: '', day: '' }
-                    })}
-                    title="Clear To date"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
+            {/* Quick Presets */}
+            <div className="filter-presets-scroll">
+              <button
+                type="button"
+                className={`filter-preset-pill ${!isDateActive ? 'active' : ''}`}
+                onClick={handleClearAllDate}
+              >
+                All Time
+              </button>
+              <button
+                type="button"
+                className={`filter-preset-pill ${isThisYearActive ? 'active' : ''}`}
+                onClick={handlePresetThisYear}
+              >
+                This Year
+              </button>
+              <button
+                type="button"
+                className={`filter-preset-pill ${isLastYearActive ? 'active' : ''}`}
+                onClick={handlePresetLastYear}
+              >
+                Last Year
+              </button>
+              <button
+                type="button"
+                className={`filter-preset-pill ${isThisMonthActive ? 'active' : ''}`}
+                onClick={handlePresetThisMonth}
+              >
+                This Month
+              </button>
             </div>
+
+            {/* From / To Boundary Selector Tabs */}
+            <div className="filter-date-boundary-tabs">
+              <button
+                type="button"
+                className={`filter-date-tab-btn ${activeBoundary === 'from' ? 'active' : ''}`}
+                onClick={() => setActiveBoundary(prev => prev === 'from' ? null : 'from')}
+                title={activeBoundary === 'from' ? 'Click to collapse calendar' : 'Click to pick start date'}
+              >
+                <span className="tab-prefix">From:</span>
+                <span className="tab-val">{fromSummary}</span>
+                {Boolean(filters.from.year) && (
+                  <span
+                    className="filter-date-tab-clear"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onChangeFilters({
+                        ...filters,
+                        from: { year: '', month: '', day: '' }
+                      });
+                    }}
+                    title="Clear start date"
+                  >
+                    <X size={11} />
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                className={`filter-date-tab-btn ${activeBoundary === 'to' ? 'active' : ''}`}
+                onClick={() => setActiveBoundary(prev => prev === 'to' ? null : 'to')}
+                title={activeBoundary === 'to' ? 'Click to collapse calendar' : 'Click to pick end date'}
+              >
+                <span className="tab-prefix">To:</span>
+                <span className="tab-val">{toSummary}</span>
+                {Boolean(filters.to.year) && (
+                  <span
+                    className="filter-date-tab-clear"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onChangeFilters({
+                        ...filters,
+                        to: { year: '', month: '', day: '' }
+                      });
+                    }}
+                    title="Clear end date"
+                  >
+                    <X size={11} />
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Interactive Visual Calendar (Expanded when From or To is selected) */}
+            {activeBoundary !== null && (
+              <FlexibleCalendar
+                value={activeValue}
+                onChange={handleCalendarChange}
+                minDate={effectiveMinDate}
+                maxDate={effectiveMaxDate}
+              />
+            )}
           </div>
 
           {/* 3. Rating Range Dual Slider */}
@@ -354,7 +441,7 @@ export const WatchedFilterModal: React.FC<WatchedFilterModalProps> = ({
 
             {/* Slider Scale Ticks */}
             <div className="dual-slider-ticks">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
                 <span
                   key={num}
                   className={`dual-slider-tick ${
@@ -389,3 +476,5 @@ export const WatchedFilterModal: React.FC<WatchedFilterModalProps> = ({
     </div>
   );
 };
+
+
