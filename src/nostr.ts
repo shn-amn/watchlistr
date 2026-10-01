@@ -241,7 +241,7 @@ export interface NostrConnectSession {
 }
 
 export function startNostrConnectSession(
-  relays: string[] = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band', 'wss://relay.primal.net', 'wss://purplepag.es'],
+  relays: string[] = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://purplepag.es'],
   onAuthCallback?: (authUrl: string) => void
 ): NostrConnectSession {
   const clientSecretKey = generateSecretKey();

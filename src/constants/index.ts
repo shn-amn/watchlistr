@@ -3,7 +3,6 @@ import type { RatingEmojiInfo } from '../types';
 export const DEFAULT_RELAYS: string[] = [
   'wss://relay.damus.io',
   'wss://nos.lol',
-  'wss://relay.nostr.band',
   'wss://relay.snort.social'
 ];
 
