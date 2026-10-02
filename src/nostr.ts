@@ -101,7 +101,7 @@ export class BunkerNip46Signer implements NostrSigner {
   async close(): Promise<void> {
     try {
       await this.bunkerSigner.close();
-    } catch (e) {}
+    } catch (e) { }
   }
 }
 
@@ -129,7 +129,7 @@ export async function parseAnyBunkerInput(input: string): Promise<{ pubkey: stri
         const secret = url.searchParams.get('secret');
         return { pubkey, relays, secret };
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   try {
@@ -286,7 +286,7 @@ export function startNostrConnectSession(
       const timeoutId = setTimeout(() => {
         if (!isSettled) {
           isSettled = true;
-          try { sub.close(); } catch (_e) {}
+          try { sub.close(); } catch (_e) { }
           reject(new Error("Nostr Connect session timed out after 2 minutes. Please check your signer app."));
         }
       }, 120000);
@@ -314,7 +314,7 @@ export function startNostrConnectSession(
                   const convKey = nip44.getConversationKey(clientSecretKey, event.pubkey);
                   const decrypted44 = nip44.decrypt(event.content, convKey);
                   response = JSON.parse(decrypted44);
-                } catch (_err) {}
+                } catch (_err) { }
               }
 
               if (!response) return;
@@ -331,14 +331,14 @@ export function startNostrConnectSession(
 
               // Accept response if result === secret OR result === 'ack' OR id === secret OR result is truthy without error
               const isMatch = response.result === secretHex ||
-                              response.result === 'ack' ||
-                              response.id === secretHex ||
-                              (response.result && response.result !== 'auth_url' && !response.error);
+                response.result === 'ack' ||
+                response.id === secretHex ||
+                (response.result && response.result !== 'auth_url' && !response.error);
 
               if (isMatch) {
                 isSettled = true;
                 clearTimeout(timeoutId);
-                try { sub.close(); } catch (_e) {}
+                try { sub.close(); } catch (_e) { }
 
                 signer.bp = {
                   pubkey: event.pubkey,
@@ -348,7 +348,7 @@ export function startNostrConnectSession(
 
                 try {
                   signer.conversationKey = nip44.getConversationKey(clientSecretKey, event.pubkey);
-                } catch (_e) {}
+                } catch (_e) { }
 
                 signer.setupSubscription();
 
@@ -793,7 +793,7 @@ export class NostrService {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify(['CLOSE', subId]));
             }
-          } catch (e) {}
+          } catch (e) { }
           cleanup();
           resolve();
         }, timeoutMs);
@@ -880,7 +880,7 @@ export class NostrService {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify(['CLOSE', subId]));
             }
-          } catch (e) {}
+          } catch (e) { }
           cleanup();
           resolve();
         }, timeoutMs);
@@ -999,7 +999,7 @@ export class NostrService {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify(['CLOSE', subId]));
             }
-          } catch (e) {}
+          } catch (e) { }
           cleanup();
           resolve();
         }, timeoutMs);
@@ -1091,7 +1091,7 @@ export class NostrService {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify(['CLOSE', subId]));
             }
-          } catch (e) {}
+          } catch (e) { }
           cleanup();
           resolve();
         }, timeoutMs);
