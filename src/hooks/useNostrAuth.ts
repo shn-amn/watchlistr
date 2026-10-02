@@ -9,7 +9,7 @@ import {
   uploadNostrImage
 } from '../nostr';
 import type { NostrSigner } from '../nostr';
-import { DEFAULT_RELAYS } from '../constants';
+import { DEFAULT_RELAYS, PROFILE_RELAYS } from '../constants';
 import type { NostrUser, ConnectionStatus } from '../types';
 import { decodeNpubToHex } from '../utils';
 
@@ -92,7 +92,7 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
 
   // Initialize Nostr Extension check and WebSocket Service
   useEffect(() => {
-    const service = new NostrService(DEFAULT_RELAYS);
+    const service = new NostrService(DEFAULT_RELAYS, PROFILE_RELAYS);
     nostrServiceRef.current = service;
 
     service.connectRelays((statuses) => {

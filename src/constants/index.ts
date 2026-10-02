@@ -6,6 +6,10 @@ export const DEFAULT_RELAYS: string[] = [
   'wss://relay.snort.social'
 ];
 
+export const PROFILE_RELAYS: string[] = [
+  'wss://purplepag.es'
+]
+
 export const DECAY_BONUS = 2.1;
 export const HALF_LIFE_DAYS = 90;
 

@@ -396,12 +396,20 @@ export function startNostrConnectSession(
 
 export class NostrService {
   private relays: Map<string, WebSocket> = new Map();
+  private profileRelays: Map<string, WebSocket> = new Map();
   private relayStatuses: Record<string, boolean> = {};
   private onStatusChangeCallback?: (status: Record<string, boolean>) => void;
 
-  constructor(defaultRelays: string[], onStatusChange?: (status: Record<string, boolean>) => void) {
+  constructor(
+    defaultRelays: string[],
+    profileRelays: string[],
+    onStatusChange?: (status: Record<string, boolean>) => void
+  ) {
     this.onStatusChangeCallback = onStatusChange;
     defaultRelays.forEach(url => this.connectRelay(url));
+    profileRelays
+      .filter((url) => !defaultRelays.includes(url))
+      .forEach(url => this.connectRelay(url, true));
   }
 
   // Update status callback
@@ -417,16 +425,19 @@ export class NostrService {
   }
 
   public close() {
+    Array.from(this.profileRelays.keys()).forEach(url => this.disconnectRelay(url));
     Array.from(this.relays.keys()).forEach(url => this.disconnectRelay(url));
   }
 
   // Connect to a single Nostr relay
-  public connectRelay(url: string) {
+  public connectRelay(url: string, profileOnly: boolean = false) {
     if (this.relays.has(url)) return;
+    if (profileOnly && this.profileRelays.has(url)) return;
 
     try {
       const ws = new WebSocket(url);
-      this.relays.set(url, ws);
+      if (profileOnly) this.profileRelays.set(url, ws);
+      else this.relays.set(url, ws);
       this.relayStatuses[url] = false;
       this.triggerStatusChange();
 
@@ -442,8 +453,9 @@ export class NostrService {
         console.log(`Disconnected from Nostr relay: ${url}`);
         // Attempt reconnect after 5 seconds
         setTimeout(() => {
-          this.relays.delete(url);
-          this.connectRelay(url);
+          if (profileOnly) this.profileRelays.delete(url);
+          else this.relays.delete(url);
+          this.connectRelay(url, profileOnly);
         }, 5000);
       };
 
@@ -459,7 +471,7 @@ export class NostrService {
 
   // Disconnect from a relay and clean up
   public disconnectRelay(url: string) {
-    const ws = this.relays.get(url);
+    const ws = this.relays.get(url) ?? this.profileRelays.get(url);
     if (ws) {
       ws.close();
       this.relays.delete(url);
@@ -469,7 +481,7 @@ export class NostrService {
   }
 
   public getConnectedRelays(): string[] {
-    return Array.from(this.relays.keys());
+    return [...new Set([...this.relays.keys(), ...this.profileRelays.keys()])]
   }
 
   public getRelayStatuses(): Record<string, boolean> {
@@ -629,19 +641,22 @@ export class NostrService {
     let newestEvent: NostrEvent | null = null;
     const promises: Promise<void>[] = [];
 
-    // Wait up to 3 seconds for sockets to connect if none are open yet
-    let activeWebSockets = Array.from(this.relays.entries()).filter(
-      ([_, ws]) => ws.readyState === WebSocket.OPEN
+    const getActiveSockets = (() =>
+      Array.from(new Map([...this.relays, ...this.profileRelays]).entries()).filter(
+        ([_, ws]) => ws.readyState === WebSocket.OPEN
+      )
     );
+
+
+    // Wait up to 3 seconds for sockets to connect if none are open yet
+    let activeWebSockets = getActiveSockets();
 
     if (activeWebSockets.length === 0) {
       await new Promise<void>((resolve) => {
         let checkCount = 0;
         const interval = setInterval(() => {
           checkCount++;
-          const openSockets = Array.from(this.relays.entries()).filter(
-            ([_, ws]) => ws.readyState === WebSocket.OPEN
-          );
+          const openSockets = getActiveSockets();
           if (openSockets.length > 0 || checkCount >= 15) {
             clearInterval(interval);
             resolve();
@@ -649,9 +664,7 @@ export class NostrService {
         }, 200);
       });
 
-      activeWebSockets = Array.from(this.relays.entries()).filter(
-        ([_, ws]) => ws.readyState === WebSocket.OPEN
-      );
+      activeWebSockets = getActiveSockets();
     }
 
     if (activeWebSockets.length === 0) {
