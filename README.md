@@ -32,7 +32,7 @@ A modern, decentralized movie & TV show tracking application built on **Nostr** 
 ## Local Development
 
 ### 1. Prerequisites
-- **Node.js**: v18 or higher
+- **Node.js**: v20.19+ or v22.12+ (required by Vite 8)
 - **TheTVDB API Key**: Free key from [TheTVDB API](https://thetvdb.com/api-information)
 
 ### 2. Environment Setup
