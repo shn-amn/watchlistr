@@ -921,8 +921,10 @@ export class NostrService {
     return Array.from(pSet);
   }
 
-  // Fetch kind:30016 lists for multiple followed pubkeys
-  public async fetchFollowedLists(pubkeys: string[], timeoutMs: number = 4000): Promise<NostrEvent[]> {
+  // Fetch kind:30016 lists for multiple followed pubkeys.
+  // Returns null when no relay was reachable, so callers can distinguish
+  // "no relay connection" from "these authors have no lists".
+  public async fetchFollowedLists(pubkeys: string[], timeoutMs: number = 4000): Promise<NostrEvent[] | null> {
     if (pubkeys.length === 0) return [];
 
     const eventsMap: Map<string, NostrEvent> = new Map(); // pubkey:d-tag -> Event
@@ -953,7 +955,7 @@ export class NostrService {
     }
 
     if (activeWebSockets.length === 0) {
-      return [];
+      return null;
     }
 
     const subId = `sub_ffollowed_${Math.random().toString(36).substring(2, 9)}`;

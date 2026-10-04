@@ -56,10 +56,16 @@ function App() {
     }
   });
 
+  // List relays currently connected. The followed-lists load retries only for
+  // relays it has not queried yet, so a late connector (e.g. relay.damus.io)
+  // is included without re-fetching every time a relay flaps.
+  const connectedRelayUrls = DEFAULT_RELAYS.filter((url) => auth.relayStatuses[url]);
+
   const social = useSocialExplore({
     nostrUser: auth.nostrUser,
     nostrServiceRef: auth.nostrServiceRef,
-    activeSignerRef: auth.activeSignerRef
+    activeSignerRef: auth.activeSignerRef,
+    connectedRelayUrls
   });
 
   const lists = useMediaLists({

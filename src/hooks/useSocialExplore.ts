@@ -7,14 +7,29 @@ export interface UseSocialExploreProps {
   nostrUser: NostrUser | null;
   nostrServiceRef: React.MutableRefObject<NostrService | null>;
   activeSignerRef: React.MutableRefObject<NostrSigner | null>;
+  /**
+   * List relay URLs currently connected. The followed-lists load retries only
+   * for relays it has not queried yet, so late connectors are included without
+   * re-fetching (and re-resolving posters) every time a relay reconnects.
+   */
+  connectedRelayUrls?: string[];
 }
 
 export function useSocialExplore({
   nostrUser,
   nostrServiceRef,
-  activeSignerRef
+  activeSignerRef,
+  connectedRelayUrls = []
 }: UseSocialExploreProps) {
   const [activeHubTab, setActiveHubTab] = useState<'my-lists' | 'explore' | 'following'>('explore');
+
+  // Guards the followed-lists load: a later request supersedes an earlier one,
+  // and rapid relay connect/disconnect events are debounced into one load.
+  const followedRequestIdRef = useRef<number>(0);
+  const followedLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Relay URLs already covered by a successful followed-lists load. Used so a
+  // relay that repeatedly reconnects does not keep re-triggering a fetch.
+  const queriedRelayUrlsRef = useRef<Set<string>>(new Set());
 
   // Follows state
   const [followedPubkeys, setFollowedPubkeys] = useState<string[]>(() => {
@@ -39,6 +54,7 @@ export function useSocialExplore({
   useEffect(() => {
     if (!nostrUser) {
       blockedPubkeysRef.current = [];
+      queriedRelayUrlsRef.current.clear();
       setBlockedPubkeys([]);
       setFollowedPubkeys([]);
       setFollowedProfiles({});
@@ -127,8 +143,9 @@ export function useSocialExplore({
   };
 
   // Load profile metadata and kind:30016 lists for followed pubkeys
-  const loadFollowedData = async (pubkeys: string[]) => {
+  const loadFollowedData = async (pubkeys: string[], relayUrlsToMark?: string[]) => {
     if (!nostrServiceRef.current || pubkeys.length === 0) return;
+    const reqId = ++followedRequestIdRef.current;
 
     pubkeys.forEach(async (pk) => {
       if (!followedProfiles[pk]) {
@@ -149,6 +166,18 @@ export function useSocialExplore({
     });
 
     const remoteEvents = await nostrServiceRef.current.fetchFollowedLists(pubkeys);
+
+    // A newer load (e.g. after more relays connected) has superseded this one.
+    if (followedRequestIdRef.current !== reqId) return;
+
+    // No relay was reachable. Keep any previously loaded lists instead of
+    // wiping them with an empty result; the relay-readiness effect will retry.
+    if (remoteEvents === null) return;
+
+    // Record which relays this successful load covered, so the retry effect
+    // does not re-fetch when those same relays disconnect/reconnect.
+    relayUrlsToMark?.forEach((url) => queriedRelayUrlsRef.current.add(url));
+
     const parsedMap: Record<string, MediaList[]> = {};
 
     remoteEvents.forEach(event => {
@@ -390,11 +419,28 @@ export function useSocialExplore({
     }
   }, [activeHubTab]);
 
+  const connectedRelayKey = connectedRelayUrls.join(',');
+
+  // Debounced so a burst of relay connections produces a single load that
+  // includes every relay open by then (late connectors like relay.damus.io
+  // would otherwise be excluded by the fetch's socket snapshot). Only runs
+  // while some connected relay has not been queried yet, so relays that keep
+  // dropping and reconnecting do not trigger repeated fetches (which would
+  // blank and re-resolve posters).
   useEffect(() => {
-    if (followedPubkeys.length > 0 && nostrServiceRef.current) {
-      loadFollowedData(followedPubkeys);
-    }
-  }, [followedPubkeys.length]);
+    if (followedPubkeys.length === 0 || !nostrServiceRef.current) return;
+    const hasUnqueriedRelay = connectedRelayUrls.some((url) => !queriedRelayUrlsRef.current.has(url));
+    if (!hasUnqueriedRelay) return;
+
+    const urlsAtLoad = connectedRelayUrls.slice();
+    if (followedLoadTimerRef.current) clearTimeout(followedLoadTimerRef.current);
+    followedLoadTimerRef.current = setTimeout(() => {
+      loadFollowedData(followedPubkeys, urlsAtLoad);
+    }, 800);
+    return () => {
+      if (followedLoadTimerRef.current) clearTimeout(followedLoadTimerRef.current);
+    };
+  }, [followedPubkeys.length, connectedRelayKey]);
 
   const handleFollowUser = async (rawKey: string) => {
     setFollowError(null);
@@ -497,6 +543,7 @@ export function useSocialExplore({
 
   const resetSocialState = () => {
     exploreRequestIdRef.current++;
+    queriedRelayUrlsRef.current.clear();
     blockedPubkeysRef.current = [];
     setBlockedPubkeys([]);
     localStorage.removeItem('watchlistr_blocked_pubkeys');
