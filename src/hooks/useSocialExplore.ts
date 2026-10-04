@@ -30,6 +30,11 @@ export function useSocialExplore({
   // Relay URLs already covered by a successful followed-lists load. Used so a
   // relay that repeatedly reconnects does not keep re-triggering a fetch.
   const queriedRelayUrlsRef = useRef<Set<string>>(new Set());
+  // Relay URLs already covered by a successful explore-feed load. Kept separate
+  // from the followed set so a late connector (e.g. relay.damus.io) triggers a
+  // single explore reload that includes it without re-fetching on every flap.
+  const exploreQueriedRelayUrlsRef = useRef<Set<string>>(new Set());
+  const exploreLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Follows state
   const [followedPubkeys, setFollowedPubkeys] = useState<string[]>(() => {
@@ -55,6 +60,7 @@ export function useSocialExplore({
     if (!nostrUser) {
       blockedPubkeysRef.current = [];
       queriedRelayUrlsRef.current.clear();
+      exploreQueriedRelayUrlsRef.current.clear();
       setBlockedPubkeys([]);
       setFollowedPubkeys([]);
       setFollowedProfiles({});
@@ -297,7 +303,8 @@ export function useSocialExplore({
   const loadExploreData = async (
     isInitial: boolean = false,
     overrideUser?: NostrUser | null,
-    overrideBlocks?: string[]
+    overrideBlocks?: string[],
+    relayUrlsToMark?: string[]
   ) => {
     if (!nostrServiceRef.current) return;
     const reqId = ++exploreRequestIdRef.current;
@@ -312,6 +319,10 @@ export function useSocialExplore({
       const untilParam = isInitial ? undefined : exploreUntil;
       const remoteEvents = await nostrServiceRef.current.fetchExploreLists(20, untilParam);
       if (exploreRequestIdRef.current !== reqId) return;
+
+      // Record the relays this successful load covered, so the readiness effect
+      // does not re-fetch when those same relays disconnect/reconnect.
+      relayUrlsToMark?.forEach((url) => exploreQueriedRelayUrlsRef.current.add(url));
 
       if (remoteEvents.length === 0) {
         setHasMoreExplore(false);
@@ -413,12 +424,6 @@ export function useSocialExplore({
     };
   }, [activeHubTab, hasMoreExplore, isExploreLoading, isExploreLoadingMore, exploreUntil]);
 
-  useEffect(() => {
-    if (activeHubTab === 'explore' && exploreLists.length === 0 && !isExploreLoading) {
-      loadExploreData(true);
-    }
-  }, [activeHubTab]);
-
   const connectedRelayKey = connectedRelayUrls.join(',');
 
   // Debounced so a burst of relay connections produces a single load that
@@ -441,6 +446,29 @@ export function useSocialExplore({
       if (followedLoadTimerRef.current) clearTimeout(followedLoadTimerRef.current);
     };
   }, [followedPubkeys.length, connectedRelayKey]);
+
+  // The explore feed has the same late-connector problem: its initial fetch
+  // snapshots the sockets open at that moment, so a relay that connects later
+  // (e.g. relay.damus.io) is excluded and never fetched until a manual refresh.
+  // Reload once per connected relay that has not been queried yet. Re-checked
+  // inside the timeout so a relay already covered by the completed initial load
+  // does not cause a redundant fetch.
+  useEffect(() => {
+    if (activeHubTab !== 'explore' || !nostrServiceRef.current) return;
+    const hasUnqueriedRelay = connectedRelayUrls.some((url) => !exploreQueriedRelayUrlsRef.current.has(url));
+    if (!hasUnqueriedRelay) return;
+
+    const urlsAtLoad = connectedRelayUrls.slice();
+    if (exploreLoadTimerRef.current) clearTimeout(exploreLoadTimerRef.current);
+    exploreLoadTimerRef.current = setTimeout(() => {
+      const stillUnqueried = connectedRelayUrls.some((url) => !exploreQueriedRelayUrlsRef.current.has(url));
+      if (!stillUnqueried) return;
+      loadExploreData(true, undefined, undefined, urlsAtLoad);
+    }, 800);
+    return () => {
+      if (exploreLoadTimerRef.current) clearTimeout(exploreLoadTimerRef.current);
+    };
+  }, [activeHubTab, connectedRelayKey]);
 
   const handleFollowUser = async (rawKey: string) => {
     setFollowError(null);
@@ -544,6 +572,7 @@ export function useSocialExplore({
   const resetSocialState = () => {
     exploreRequestIdRef.current++;
     queriedRelayUrlsRef.current.clear();
+    exploreQueriedRelayUrlsRef.current.clear();
     blockedPubkeysRef.current = [];
     setBlockedPubkeys([]);
     localStorage.removeItem('watchlistr_blocked_pubkeys');
