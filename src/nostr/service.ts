@@ -100,49 +100,50 @@ export class NostrService {
     }
   }
 
-  // Fetch all kind:30016 events for a pubkey
-  public async fetchUserLists(pubkey: string, timeoutMs: number = 4000): Promise<NostrEvent[]> {
-    const eventsMap: Map<string, NostrEvent> = new Map(); // d-tag -> Event
-    const promises: Promise<void>[] = [];
+  /**
+   * Shared relay query engine.
+   *
+   * Waits briefly for sockets to open, subscribes to every connected relay with
+   * the given filter, and resolves once each relay has sent EOSE or the timeout
+   * elapses. Returns the raw events gathered from all relays, or `null` when no
+   * relay was reachable so callers can distinguish "offline" from "no results".
+   */
+  private async queryRelays(
+    filter: Record<string, any>,
+    opts: { timeoutMs?: number; includeProfileRelays?: boolean; subPrefix?: string } = {}
+  ): Promise<NostrEvent[] | null> {
+    const { timeoutMs = 3000, includeProfileRelays = false, subPrefix = 'sub' } = opts;
+
+    const getOpenSockets = (): Array<[string, WebSocket]> => {
+      const pool = includeProfileRelays
+        ? new Map([...this.relays, ...this.profileRelays])
+        : new Map(this.relays);
+      return Array.from(pool.entries()).filter(([, ws]) => ws.readyState === WebSocket.OPEN);
+    };
 
     // Wait up to 3 seconds for sockets to connect if none are open yet
-    let activeWebSockets = Array.from(this.relays.entries()).filter(
-      ([_, ws]) => ws.readyState === WebSocket.OPEN
-    );
-
+    let activeWebSockets = getOpenSockets();
     if (activeWebSockets.length === 0) {
       await new Promise<void>((resolve) => {
         let checkCount = 0;
         const interval = setInterval(() => {
           checkCount++;
-          const openSockets = Array.from(this.relays.entries()).filter(
-            ([_, ws]) => ws.readyState === WebSocket.OPEN
-          );
-          if (openSockets.length > 0 || checkCount >= 15) {
+          if (getOpenSockets().length > 0 || checkCount >= 15) {
             clearInterval(interval);
             resolve();
           }
         }, 200);
       });
-
-      activeWebSockets = Array.from(this.relays.entries()).filter(
-        ([_, ws]) => ws.readyState === WebSocket.OPEN
-      );
+      activeWebSockets = getOpenSockets();
     }
 
     if (activeWebSockets.length === 0) {
-      console.warn("No active relay connections to fetch lists.");
-      return [];
+      return null;
     }
 
-    const subId = `sub_lists_${Math.random().toString(36).substring(2, 9)}`;
-    const filter = {
-      authors: [pubkey],
-      kinds: [30016, 5]
-    };
-
-    const deletedDTags: Map<string, number> = new Map();
-    const deletedEventIds: Set<string> = new Set();
+    const subId = `${subPrefix}_${Math.random().toString(36).substring(2, 9)}`;
+    const collected: NostrEvent[] = [];
+    const promises: Promise<void>[] = [];
 
     activeWebSockets.forEach(([url, ws]) => {
       const promise = new Promise<void>((resolve) => {
@@ -150,51 +151,7 @@ export class NostrService {
           try {
             const data = JSON.parse(e.data);
             if (data[0] === 'EVENT' && data[1] === subId) {
-              const event = data[2] as NostrEvent;
-
-              if (event.kind === 5) {
-                // NIP-09 deletion event
-                event.tags.forEach(t => {
-                  if (t[0] === 'a') {
-                    const parts = t[1]?.split(':');
-                    if (parts && parts[0] === '30016' && parts[2]) {
-                      const d = parts[2];
-                      deletedDTags.set(d, Math.max(deletedDTags.get(d) || 0, event.created_at));
-                      const existing = eventsMap.get(d);
-                      if (existing && existing.created_at <= event.created_at) {
-                        eventsMap.delete(d);
-                      }
-                    }
-                  } else if (t[0] === 'e' && t[1]) {
-                    deletedEventIds.add(t[1]);
-                    for (const [d, existing] of eventsMap.entries()) {
-                      if (existing.id === t[1]) {
-                        eventsMap.delete(d);
-                      }
-                    }
-                  } else if (t[0] === 'd' && t[1]) {
-                    deletedDTags.set(t[1], Math.max(deletedDTags.get(t[1]) || 0, event.created_at));
-                    const existing = eventsMap.get(t[1]);
-                    if (existing && existing.created_at <= event.created_at) {
-                      eventsMap.delete(t[1]);
-                    }
-                  }
-                });
-              } else if (event.kind === 30016) {
-                const dTag = event.tags.find(t => t[0] === 'd')?.[1];
-                const isTombstone = event.tags.some(t => t[0] === 'deleted' && t[1] === 'true');
-                if (dTag && !isTombstone) {
-                  const isDeletedById = Boolean(event.id && deletedEventIds.has(event.id));
-                  const isDeletedByDTag = (deletedDTags.get(dTag) || 0) >= event.created_at;
-                  if (!isDeletedById && !isDeletedByDTag) {
-                    const existing = eventsMap.get(dTag);
-                    // Keep the newer event (replaceable event rule)
-                    if (!existing || event.created_at > existing.created_at) {
-                      eventsMap.set(dTag, event);
-                    }
-                  }
-                }
-              }
+              collected.push(data[2] as NostrEvent);
             } else if (data[0] === 'EOSE' && data[1] === subId) {
               cleanup();
               resolve();
@@ -208,13 +165,9 @@ export class NostrService {
           ws.removeEventListener('message', handleMessage);
         };
 
-        // Listen for events
         ws.addEventListener('message', handleMessage);
-
-        // Send request
         ws.send(JSON.stringify(['REQ', subId, filter]));
 
-        // Resolve on timeout as a fallback
         setTimeout(() => {
           try {
             if (ws.readyState === WebSocket.OPEN) {
@@ -229,8 +182,67 @@ export class NostrService {
       promises.push(promise);
     });
 
-    // Wait for all relays to finish EOSE or timeout
     await Promise.all(promises);
+    return collected;
+  }
+
+  // Fetch all kind:30016 events for a pubkey
+  public async fetchUserLists(pubkey: string, timeoutMs: number = 4000): Promise<NostrEvent[]> {
+    const events = await this.queryRelays(
+      { authors: [pubkey], kinds: [30016, 5] },
+      { timeoutMs, subPrefix: 'sub_lists' }
+    );
+    if (!events) return [];
+
+    const eventsMap: Map<string, NostrEvent> = new Map(); // d-tag -> Event
+    const deletedDTags: Map<string, number> = new Map();
+    const deletedEventIds: Set<string> = new Set();
+
+    events.forEach(event => {
+      if (event.kind === 5) {
+        // NIP-09 deletion event
+        event.tags.forEach(t => {
+          if (t[0] === 'a') {
+            const parts = t[1]?.split(':');
+            if (parts && parts[0] === '30016' && parts[2]) {
+              const d = parts[2];
+              deletedDTags.set(d, Math.max(deletedDTags.get(d) || 0, event.created_at));
+              const existing = eventsMap.get(d);
+              if (existing && existing.created_at <= event.created_at) {
+                eventsMap.delete(d);
+              }
+            }
+          } else if (t[0] === 'e' && t[1]) {
+            deletedEventIds.add(t[1]);
+            for (const [d, existing] of eventsMap.entries()) {
+              if (existing.id === t[1]) {
+                eventsMap.delete(d);
+              }
+            }
+          } else if (t[0] === 'd' && t[1]) {
+            deletedDTags.set(t[1], Math.max(deletedDTags.get(t[1]) || 0, event.created_at));
+            const existing = eventsMap.get(t[1]);
+            if (existing && existing.created_at <= event.created_at) {
+              eventsMap.delete(t[1]);
+            }
+          }
+        });
+      } else if (event.kind === 30016) {
+        const dTag = event.tags.find(t => t[0] === 'd')?.[1];
+        const isTombstone = event.tags.some(t => t[0] === 'deleted' && t[1] === 'true');
+        if (dTag && !isTombstone) {
+          const isDeletedById = Boolean(event.id && deletedEventIds.has(event.id));
+          const isDeletedByDTag = (deletedDTags.get(dTag) || 0) >= event.created_at;
+          if (!isDeletedById && !isDeletedByDTag) {
+            const existing = eventsMap.get(dTag);
+            // Keep the newer event (replaceable event rule)
+            if (!existing || event.created_at > existing.created_at) {
+              eventsMap.set(dTag, event);
+            }
+          }
+        }
+      }
+    });
 
     // Final filter to ensure no deleted or tombstoned events slip through
     return Array.from(eventsMap.values()).filter(ev => {
@@ -244,171 +256,35 @@ export class NostrService {
 
   // Fetch kind:0 metadata profile for a pubkey
   public async fetchUserProfile(pubkey: string, timeoutMs: number = 3000): Promise<NostrEvent | null> {
-    let newestEvent: NostrEvent | null = null;
-    const promises: Promise<void>[] = [];
-
-    const getActiveSockets = (() =>
-      Array.from(new Map([...this.relays, ...this.profileRelays]).entries()).filter(
-        ([_, ws]) => ws.readyState === WebSocket.OPEN
-      )
+    const events = await this.queryRelays(
+      { authors: [pubkey], kinds: [0], limit: 1 },
+      { timeoutMs, includeProfileRelays: true, subPrefix: 'sub_profile' }
     );
+    if (!events) return null;
 
-
-    // Wait up to 3 seconds for sockets to connect if none are open yet
-    let activeWebSockets = getActiveSockets();
-
-    if (activeWebSockets.length === 0) {
-      await new Promise<void>((resolve) => {
-        let checkCount = 0;
-        const interval = setInterval(() => {
-          checkCount++;
-          const openSockets = getActiveSockets();
-          if (openSockets.length > 0 || checkCount >= 15) {
-            clearInterval(interval);
-            resolve();
-          }
-        }, 200);
-      });
-
-      activeWebSockets = getActiveSockets();
-    }
-
-    if (activeWebSockets.length === 0) {
-      return null;
-    }
-
-    const subId = `sub_profile_${Math.random().toString(36).substring(2, 9)}`;
-    const filter = {
-      authors: [pubkey],
-      kinds: [0],
-      limit: 1
-    };
-
-    activeWebSockets.forEach(([url, ws]) => {
-      const promise = new Promise<void>((resolve) => {
-        const handleMessage = (e: MessageEvent) => {
-          try {
-            const data = JSON.parse(e.data);
-            if (data[0] === 'EVENT' && data[1] === subId) {
-              const event = data[2] as NostrEvent;
-              if (!newestEvent || event.created_at > newestEvent.created_at) {
-                newestEvent = event;
-              }
-            } else if (data[0] === 'EOSE' && data[1] === subId) {
-              cleanup();
-              resolve();
-            }
-          } catch (err) {
-            console.error(`Error parsing profile from relay ${url}:`, err);
-          }
-        };
-
-        const cleanup = () => {
-          ws.removeEventListener('message', handleMessage);
-        };
-
-        ws.addEventListener('message', handleMessage);
-        ws.send(JSON.stringify(['REQ', subId, filter]));
-
-        setTimeout(() => {
-          try {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify(['CLOSE', subId]));
-            }
-          } catch (e) { }
-          cleanup();
-          resolve();
-        }, timeoutMs);
-      });
-
-      promises.push(promise);
+    let newestEvent: NostrEvent | null = null;
+    events.forEach(event => {
+      if (!newestEvent || event.created_at > newestEvent.created_at) {
+        newestEvent = event;
+      }
     });
-
-    await Promise.all(promises);
     return newestEvent;
   }
 
   // Fetch kind:10016 follow list for a pubkey
   public async fetchUserFollows(pubkey: string, timeoutMs: number = 3000): Promise<string[]> {
-    let newestEvent: NostrEvent | null = null;
-    const promises: Promise<void>[] = [];
-
-    let activeWebSockets = Array.from(this.relays.entries()).filter(
-      ([_, ws]) => ws.readyState === WebSocket.OPEN
+    const events = await this.queryRelays(
+      { authors: [pubkey], kinds: [10016], limit: 1 },
+      { timeoutMs, subPrefix: 'sub_follows' }
     );
+    if (!events) return [];
 
-    if (activeWebSockets.length === 0) {
-      await new Promise<void>((resolve) => {
-        let checkCount = 0;
-        const interval = setInterval(() => {
-          checkCount++;
-          const openSockets = Array.from(this.relays.entries()).filter(
-            ([_, ws]) => ws.readyState === WebSocket.OPEN
-          );
-          if (openSockets.length > 0 || checkCount >= 15) {
-            clearInterval(interval);
-            resolve();
-          }
-        }, 200);
-      });
-
-      activeWebSockets = Array.from(this.relays.entries()).filter(
-        ([_, ws]) => ws.readyState === WebSocket.OPEN
-      );
-    }
-
-    if (activeWebSockets.length === 0) {
-      return [];
-    }
-
-    const subId = `sub_follows_${Math.random().toString(36).substring(2, 9)}`;
-    const filter = {
-      authors: [pubkey],
-      kinds: [10016],
-      limit: 1
-    };
-
-    activeWebSockets.forEach(([url, ws]) => {
-      const promise = new Promise<void>((resolve) => {
-        const handleMessage = (e: MessageEvent) => {
-          try {
-            const data = JSON.parse(e.data);
-            if (data[0] === 'EVENT' && data[1] === subId) {
-              const event = data[2] as NostrEvent;
-              if (!newestEvent || event.created_at > newestEvent.created_at) {
-                newestEvent = event;
-              }
-            } else if (data[0] === 'EOSE' && data[1] === subId) {
-              cleanup();
-              resolve();
-            }
-          } catch (err) {
-            console.error(`Error parsing follows from relay ${url}:`, err);
-          }
-        };
-
-        const cleanup = () => {
-          ws.removeEventListener('message', handleMessage);
-        };
-
-        ws.addEventListener('message', handleMessage);
-        ws.send(JSON.stringify(['REQ', subId, filter]));
-
-        setTimeout(() => {
-          try {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify(['CLOSE', subId]));
-            }
-          } catch (e) { }
-          cleanup();
-          resolve();
-        }, timeoutMs);
-      });
-
-      promises.push(promise);
+    let newestEvent: NostrEvent | null = null;
+    events.forEach(event => {
+      if (!newestEvent || event.created_at > newestEvent.created_at) {
+        newestEvent = event;
+      }
     });
-
-    await Promise.all(promises);
 
     if (!newestEvent) return [];
     return (newestEvent as NostrEvent).tags
@@ -418,90 +294,15 @@ export class NostrService {
 
   // Fetch kind:30007 block/mute list for a pubkey
   public async fetchUserBlocks(pubkey: string, timeoutMs: number = 3000): Promise<string[]> {
-    const promises: Promise<void>[] = [];
-
-    let activeWebSockets = Array.from(this.relays.entries()).filter(
-      ([_, ws]) => ws.readyState === WebSocket.OPEN
+    const events = await this.queryRelays(
+      { authors: [pubkey], kinds: [30007], "#d": ["30016", "mute"] },
+      { timeoutMs, subPrefix: 'sub_blocks' }
     );
-
-    if (activeWebSockets.length === 0) {
-      await new Promise<void>((resolve) => {
-        let checkCount = 0;
-        const interval = setInterval(() => {
-          checkCount++;
-          const openSockets = Array.from(this.relays.entries()).filter(
-            ([_, ws]) => ws.readyState === WebSocket.OPEN
-          );
-          if (openSockets.length > 0 || checkCount >= 15) {
-            clearInterval(interval);
-            resolve();
-          }
-        }, 200);
-      });
-
-      activeWebSockets = Array.from(this.relays.entries()).filter(
-        ([_, ws]) => ws.readyState === WebSocket.OPEN
-      );
-    }
-
-    if (activeWebSockets.length === 0) {
-      return [];
-    }
-
-    const subId = `sub_blocks_${Math.random().toString(36).substring(2, 9)}`;
-    const filter = {
-      authors: [pubkey],
-      kinds: [30007],
-      "#d": ["30016", "mute"]
-    };
-
-    const eventsList: NostrEvent[] = [];
-
-    activeWebSockets.forEach(([url, ws]) => {
-      const promise = new Promise<void>((resolve) => {
-        const handleMessage = (e: MessageEvent) => {
-          try {
-            const data = JSON.parse(e.data);
-            if (data[0] === 'EVENT' && data[1] === subId) {
-              const event = data[2] as NostrEvent;
-              eventsList.push(event);
-            } else if (data[0] === 'EOSE' && data[1] === subId) {
-              cleanup();
-              resolve();
-            }
-          } catch (err) {
-            console.error(`Error parsing blocks from relay ${url}:`, err);
-          }
-        };
-
-        const cleanup = () => {
-          ws.removeEventListener('message', handleMessage);
-        };
-
-        ws.addEventListener('message', handleMessage);
-        ws.send(JSON.stringify(['REQ', subId, filter]));
-
-        setTimeout(() => {
-          try {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify(['CLOSE', subId]));
-            }
-          } catch (e) { }
-          cleanup();
-          resolve();
-        }, timeoutMs);
-      });
-
-      promises.push(promise);
-    });
-
-    await Promise.all(promises);
-
-    if (eventsList.length === 0) return [];
+    if (!events || events.length === 0) return [];
 
     // Group kind:30007 events by d-tag, keeping the newest event (max created_at) per NIP-33/NIP-51
     const newestByDTag = new Map<string, NostrEvent>();
-    eventsList.forEach(event => {
+    events.forEach(event => {
       const dTag = event.tags.find(t => t[0] === 'd')?.[1] || '';
       const existing = newestByDTag.get(dTag);
       if (!existing || event.created_at > existing.created_at) {
@@ -533,182 +334,51 @@ export class NostrService {
   public async fetchFollowedLists(pubkeys: string[], timeoutMs: number = 4000): Promise<NostrEvent[] | null> {
     if (pubkeys.length === 0) return [];
 
-    const eventsMap: Map<string, NostrEvent> = new Map(); // pubkey:d-tag -> Event
-    const promises: Promise<void>[] = [];
-
-    let activeWebSockets = Array.from(this.relays.entries()).filter(
-      ([_, ws]) => ws.readyState === WebSocket.OPEN
+    const events = await this.queryRelays(
+      { authors: pubkeys, kinds: [30016] },
+      { timeoutMs, subPrefix: 'sub_ffollowed' }
     );
+    if (!events) return null;
 
-    if (activeWebSockets.length === 0) {
-      await new Promise<void>((resolve) => {
-        let checkCount = 0;
-        const interval = setInterval(() => {
-          checkCount++;
-          const openSockets = Array.from(this.relays.entries()).filter(
-            ([_, ws]) => ws.readyState === WebSocket.OPEN
-          );
-          if (openSockets.length > 0 || checkCount >= 15) {
-            clearInterval(interval);
-            resolve();
-          }
-        }, 200);
-      });
-
-      activeWebSockets = Array.from(this.relays.entries()).filter(
-        ([_, ws]) => ws.readyState === WebSocket.OPEN
-      );
-    }
-
-    if (activeWebSockets.length === 0) {
-      return null;
-    }
-
-    const subId = `sub_ffollowed_${Math.random().toString(36).substring(2, 9)}`;
-    const filter = {
-      authors: pubkeys,
-      kinds: [30016]
-    };
-
-    activeWebSockets.forEach(([url, ws]) => {
-      const promise = new Promise<void>((resolve) => {
-        const handleMessage = (e: MessageEvent) => {
-          try {
-            const data = JSON.parse(e.data);
-            if (data[0] === 'EVENT' && data[1] === subId) {
-              const event = data[2] as NostrEvent;
-              const dTag = event.tags.find(t => t[0] === 'd')?.[1] || '';
-              const isTombstone = event.tags.some(t => t[0] === 'deleted' && t[1] === 'true');
-              if (dTag && !isTombstone) {
-                const key = `${event.pubkey}:${dTag}`;
-                const existing = eventsMap.get(key);
-                if (!existing || event.created_at > existing.created_at) {
-                  eventsMap.set(key, event);
-                }
-              }
-            } else if (data[0] === 'EOSE' && data[1] === subId) {
-              cleanup();
-              resolve();
-            }
-          } catch (err) {
-            console.error(`Error parsing followed lists from relay ${url}:`, err);
-          }
-        };
-
-        const cleanup = () => {
-          ws.removeEventListener('message', handleMessage);
-        };
-
-        ws.addEventListener('message', handleMessage);
-        ws.send(JSON.stringify(['REQ', subId, filter]));
-
-        setTimeout(() => {
-          try {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify(['CLOSE', subId]));
-            }
-          } catch (e) { }
-          cleanup();
-          resolve();
-        }, timeoutMs);
-      });
-
-      promises.push(promise);
+    const eventsMap: Map<string, NostrEvent> = new Map(); // pubkey:d-tag -> Event
+    events.forEach(event => {
+      const dTag = event.tags.find(t => t[0] === 'd')?.[1] || '';
+      const isTombstone = event.tags.some(t => t[0] === 'deleted' && t[1] === 'true');
+      if (dTag && !isTombstone) {
+        const key = `${event.pubkey}:${dTag}`;
+        const existing = eventsMap.get(key);
+        if (!existing || event.created_at > existing.created_at) {
+          eventsMap.set(key, event);
+        }
+      }
     });
 
-    await Promise.all(promises);
     return Array.from(eventsMap.values());
   }
 
   // Fetch global kind:30016 lists with pagination limit and optional until timestamp
   public async fetchExploreLists(limit: number = 20, until?: number, timeoutMs: number = 4000): Promise<NostrEvent[]> {
-    const eventsMap: Map<string, NostrEvent> = new Map();
-    const promises: Promise<void>[] = [];
-
-    let activeWebSockets = Array.from(this.relays.entries()).filter(
-      ([_, ws]) => ws.readyState === WebSocket.OPEN
-    );
-
-    if (activeWebSockets.length === 0) {
-      await new Promise<void>((resolve) => {
-        let checkCount = 0;
-        const interval = setInterval(() => {
-          checkCount++;
-          const openSockets = Array.from(this.relays.entries()).filter(
-            ([_, ws]) => ws.readyState === WebSocket.OPEN
-          );
-          if (openSockets.length > 0 || checkCount >= 15) {
-            clearInterval(interval);
-            resolve();
-          }
-        }, 200);
-      });
-
-      activeWebSockets = Array.from(this.relays.entries()).filter(
-        ([_, ws]) => ws.readyState === WebSocket.OPEN
-      );
-    }
-
-    if (activeWebSockets.length === 0) {
-      return [];
-    }
-
-    const subId = `sub_explore_${Math.random().toString(36).substring(2, 9)}`;
-    const filter: any = {
-      kinds: [30016],
-      limit
-    };
+    const filter: Record<string, any> = { kinds: [30016], limit };
     if (until) {
       filter.until = until;
     }
 
-    activeWebSockets.forEach(([url, ws]) => {
-      const promise = new Promise<void>((resolve) => {
-        const handleMessage = (e: MessageEvent) => {
-          try {
-            const data = JSON.parse(e.data);
-            if (data[0] === 'EVENT' && data[1] === subId) {
-              const event = data[2] as NostrEvent;
-              const dTag = event.tags.find(t => t[0] === 'd')?.[1] || '';
-              const isTombstone = event.tags.some(t => t[0] === 'deleted' && t[1] === 'true');
-              if (dTag && !isTombstone) {
-                const key = `${event.pubkey}:${dTag}`;
-                const existing = eventsMap.get(key);
-                if (!existing || event.created_at > existing.created_at) {
-                  eventsMap.set(key, event);
-                }
-              }
-            } else if (data[0] === 'EOSE' && data[1] === subId) {
-              cleanup();
-              resolve();
-            }
-          } catch (err) {
-            console.error(`Error parsing explore lists from relay ${url}:`, err);
-          }
-        };
+    const events = await this.queryRelays(filter, { timeoutMs, subPrefix: 'sub_explore' });
+    if (!events) return [];
 
-        const cleanup = () => {
-          ws.removeEventListener('message', handleMessage);
-        };
-
-        ws.addEventListener('message', handleMessage);
-        ws.send(JSON.stringify(['REQ', subId, filter]));
-
-        setTimeout(() => {
-          try {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify(['CLOSE', subId]));
-            }
-          } catch (e) { }
-          cleanup();
-          resolve();
-        }, timeoutMs);
-      });
-
-      promises.push(promise);
+    const eventsMap: Map<string, NostrEvent> = new Map();
+    events.forEach(event => {
+      const dTag = event.tags.find(t => t[0] === 'd')?.[1] || '';
+      const isTombstone = event.tags.some(t => t[0] === 'deleted' && t[1] === 'true');
+      if (dTag && !isTombstone) {
+        const key = `${event.pubkey}:${dTag}`;
+        const existing = eventsMap.get(key);
+        if (!existing || event.created_at > existing.created_at) {
+          eventsMap.set(key, event);
+        }
+      }
     });
 
-    await Promise.all(promises);
     return Array.from(eventsMap.values()).sort((a, b) => b.created_at - a.created_at);
   }
 
