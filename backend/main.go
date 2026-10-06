@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -16,8 +14,6 @@ import (
 )
 
 func main() {
-	loadDotEnv()
-
 	cfg := tvdb.Config{
 		APIKey:  os.Getenv("TTVDB_API_KEY"),
 		Token:   os.Getenv("TTVDB_TOKEN"),
@@ -58,31 +54,4 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-// loadDotEnv loads KEY=VALUE pairs from the first .env found in the working
-// directory or its parent. Real environment variables always win.
-func loadDotEnv() {
-	for _, path := range []string{".env", filepath.Join("..", ".env")} {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		for line := range strings.SplitSeq(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			idx := strings.Index(line, "=")
-			if idx <= 0 {
-				continue
-			}
-			key := strings.TrimSpace(line[:idx])
-			value := strings.TrimSpace(line[idx+1:])
-			if _, exists := os.LookupEnv(key); !exists {
-				_ = os.Setenv(key, value)
-			}
-		}
-		return
-	}
 }

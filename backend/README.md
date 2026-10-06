@@ -30,6 +30,11 @@ directory / its parent):
 | `HOST`          | `0.0.0.0`                  |                             |
 | `TVDB_BASE_URL` | `https://api4.thetvdb.com/v4` | Override for testing.    |
 
+The service reads these from the process environment only; it does not read
+`.env` files. Provide them via Docker (`env_file`), your orchestrator, or your
+shell. `npm start` at the repo root sources the root `.env` for local
+development.
+
 ## Endpoints
 
 - `GET  /healthz`

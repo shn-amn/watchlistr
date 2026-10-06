@@ -75,7 +75,8 @@ npm start            # Start backend only
 ```
 
 ### Environment Setup
-Required environment variables in `.env`:
+The backend reads environment variables only (no `.env` parsing). For local
+development, put them in a `.env` at the repo root — `npm start` sources it:
 ```env
 TTVDB_API_KEY=your_tvdb_api_key_here
 PORT=3000 (optional)

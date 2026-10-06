@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check-and-build:
+  frontend:
     name: Frontend build
     runs-on: ubuntu-latest
     permissions:
@@ -52,7 +52,7 @@ jobs:
 
   release:
     name: Frontend release
-    needs: check-and-build
+    needs: frontend
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
     permissions:
@@ -98,8 +98,8 @@ jobs:
           files: watchlistr-dist.zip
 
   docker:
-    name: Proxy image build and publish
-    needs: check-and-build
+    name: Backend image build and publish
+    needs: backend
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
     permissions:

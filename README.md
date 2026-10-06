@@ -49,6 +49,15 @@ TTVDB_API_KEY=your_tvdb_api_key_here
 # PORT=3000 (Optional, defaults to 3000)
 ```
 
+The backend reads plain environment variables only — it never parses `.env`
+itself. The `npm start` script sources the file for you, so this works for local
+development with no extra steps. When running the binary directly, export the
+variables yourself:
+
+```bash
+TTVDB_API_KEY=your_tvdb_api_key_here go -C backend run .
+```
+
 ### 3. Install Dependencies
 ```bash
 npm install

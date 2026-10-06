@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:all": "concurrently \"npm start\" \"npm run dev\"",
-    "start": "go -C backend run .",
+    "start": "set -a; [ -f .env ] && . ./.env; set +a; go -C backend run .",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
