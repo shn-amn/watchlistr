@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:all": "concurrently \"npm start\" \"npm run dev\"",
-    "start": "node server.js",
+    "start": "go -C backend run .",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"

@@ -51,15 +51,15 @@ Watchlistr is a modern, decentralized movie and TV show tracking application bui
 - **NIP-51**: List management (follows, mutes, curated lists)
 - **NIP-98**: Media upload authentication
 
-### Backend API Proxy
-- **Node.js 20**: Native HTTP and fetch APIs
-- **TVDB API Proxy**: CORS-enabled proxy for TheTVDB API
-- **Token Management**: Automatic token refresh and persistence
+### Backend API
+- **Go 1.26**: `net/http` with zero external dependencies
+- **Normalized `/api/v1`**: Provider-agnostic media contract for the frontend
+- **TVDB Upstream**: TheTVDB v4 client with automatic token refresh
 - **Environment-based**: Configurable via environment variables
 
 ### Deployment Architecture
 - **Static Frontend**: Pre-built React application
-- **Decoupled Backend**: Separate API proxy server
+- **Decoupled Backend**: Standalone metadata API service (`backend/`)
 - **Docker Containerization**: Easy deployment via Docker Compose
 - **Caddy Server**: Reverse proxy and static file serving
 
@@ -165,7 +165,7 @@ interface NostrUser {
 ## API Integration
 
 ### TheTVDB API Proxy
-- **Endpoint**: `/api/tvdb/*`
+- **Endpoint**: `/api/v1/*`
 - **Authentication**: Bearer token management
 - **CORS Support**: Cross-origin requests enabled
 - **Error Handling**: Automatic token refresh on 401
@@ -247,7 +247,7 @@ npm run dev:all
 npm run build
 
 # 2. Run backend container
-docker compose up -d
+docker compose -f backend/docker-compose.yml up -d
 
 # 3. Configure Caddy server
 # See README for Caddy configuration

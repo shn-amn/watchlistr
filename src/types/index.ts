@@ -14,6 +14,16 @@ export interface Media {
   overview?: string;
 }
 
+// Normalized extended metadata for the details view (served by /api/v1).
+export interface MediaDetail extends Media {
+  showrunner?: string;
+  status?: string;
+  firstAired?: string;
+  runtime?: number;
+  network?: string;
+  studio?: string;
+}
+
 export interface MediaList {
   id: string;
   title: string;
@@ -78,7 +88,7 @@ export interface DetailsModalState {
   item: Media | null;
   isLoading: boolean;
   error: string | null;
-  extendedInfo: any | null;
+  extendedInfo: MediaDetail | null;
 }
 
 export interface NewListModalState {

@@ -1,0 +1,151 @@
+openapi: 3.0.3
+info:
+  title: Watchlistr Media API
+  version: 1.0.0
+  description: |
+    Normalized media metadata API for Watchlistr. The frontend targets this
+    contract, not TVDB directly, so the upstream provider (and future sources
+    such as Rotten Tomatoes) can change without touching the UI.
+servers:
+  - url: /api/v1
+paths:
+  /search:
+    get:
+      summary: Search for movies and TV shows
+      operationId: searchMedia
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 50
+      responses:
+        '200':
+          description: Matching titles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Media'
+  /media/{type}/{id}:
+    get:
+      summary: Get extended details for a single title
+      operationId: getMediaDetail
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [movie, tv]
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+      responses:
+        '200':
+          description: Extended metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaDetail'
+        '404':
+          description: Unknown media type or title not found
+        '502':
+          description: Upstream metadata provider error
+  /media/batch:
+    post:
+      summary: Resolve metadata for many titles in one request
+      operationId: batchResolveMedia
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, type]
+                    properties:
+                      id:
+                        type: string
+                        example: movie-113
+                      type:
+                        type: string
+                        enum: [movie, tv]
+      responses:
+        '200':
+          description: Resolved results, in request order. Unresolvable items are omitted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Media'
+components:
+  schemas:
+    Media:
+      type: object
+      required: [id, type, title, year, poster, genres]
+      properties:
+        id:
+          type: string
+          example: tv-81189
+        type:
+          type: string
+          enum: [movie, tv]
+        title:
+          type: string
+        year:
+          type: string
+        poster:
+          type: string
+        genres:
+          type: array
+          items:
+            type: string
+        slug:
+          type: string
+        director:
+          type: string
+        creator:
+          type: string
+        overview:
+          type: string
+    MediaDetail:
+      allOf:
+        - $ref: '#/components/schemas/Media'
+        - type: object
+          properties:
+            showrunner:
+              type: string
+            status:
+              type: string
+            firstAired:
+              type: string
+            runtime:
+              type: integer
+            network:
+              type: string
+            studio:
+              type: string

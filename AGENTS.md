@@ -17,7 +17,10 @@ Watchlistr is a decentralized media tracking application built on the Nostr prot
 - `src/nostr.ts` - Nostr protocol implementation
 - `src/hooks/useMediaLists.tsx` - Core list management
 - `src/hooks/useNostrAuth.ts` - Authentication system
-- `server.js` - TVDB API proxy server
+- `backend/main.go` - Go metadata API entrypoint
+- `backend/internal/api/handlers.go` - `/api/v1` routes and normalization
+- `backend/internal/tvdb/client.go` - TVDB v4 client with token refresh
+- `backend/openapi.yaml` - `/api/v1` contract (source of truth)
 - `src/types/index.ts` - TypeScript interfaces
 
 ### Data Structures (Key Interfaces)
@@ -57,8 +60,11 @@ interface MediaList {
 
 ### API Endpoints
 - Frontend: `http://localhost:5173` (Vite dev server)
-- Backend: `http://localhost:3000/api/tvdb/*` (TVDB proxy)
-- TVDB API: `https://api4.thetvdb.com/v4/*`
+- Backend: `http://localhost:3000/api/v1/*` (normalized media API, Go)
+- TVDB API: `https://api4.thetvdb.com/v4/*` (upstream, server-side only)
+
+The frontend must target `/api/v1`, never TVDB directly. Update
+`backend/openapi.yaml` whenever the contract changes.
 
 ### Development Commands
 ```bash

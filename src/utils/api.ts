@@ -1,4 +1,4 @@
-import type { Media } from '../types';
+import type { Media, MediaDetail } from '../types';
 
 /**
  * Prefixes API endpoints with the configured Vite base path (e.g. /watch for nightly).
@@ -9,88 +9,85 @@ export const getApiUrl = (endpoint: string): string => {
   return `${base}${cleanEndpoint}`;
 };
 
-/**
- * Fetches showrunner / lead writer credits for a TV series from TheTVDB.
- */
-export const fetchTVShowrunner = async (seriesId: string): Promise<string | undefined> => {
-  try {
-    const epRes = await fetch(getApiUrl(`/api/tvdb/series/${seriesId}/episodes/default?page=0`));
-    if (epRes.ok) {
-      const epJson = await epRes.json();
-      const ep1 = epJson.data?.episodes?.find((e: any) => e.seasonNumber === 1 && e.number === 1) || epJson.data?.episodes?.[0];
-      if (ep1?.id) {
-        const epExtRes = await fetch(getApiUrl(`/api/tvdb/episodes/${ep1.id}/extended`));
-        if (epExtRes.ok) {
-          const epExtJson = await epExtRes.json();
-          const writers = epExtJson.data?.characters
-            ?.filter((c: any) => c.peopleType === 'Writer')
-            .map((c: any) => c.personName)
-            .filter(Boolean);
-          if (writers && writers.length > 0) {
-            return Array.from(new Set<string>(writers)).join(', ');
-          }
-        }
-      }
+const numericId = (media: Media): string =>
+  media.id.includes('-') ? media.id.split('-')[1] : media.id;
+
+async function readJSON<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    let message = `Request failed with status ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {
+      // Response had no JSON error body; keep the status-based message.
     }
-  } catch (e) { }
-  return undefined;
+    throw new Error(message);
+  }
+  return (await res.json()) as T;
+}
+
+/**
+ * Searches the media catalog (TVDB-backed) and returns normalized results.
+ */
+export const searchMedia = async (query: string, limit = 10): Promise<Media[]> => {
+  const res = await fetch(getApiUrl(`/api/v1/search?q=${encodeURIComponent(query)}&limit=${limit}`));
+  const json = await readJSON<{ results?: Media[] }>(res);
+  return json.results ?? [];
 };
 
 /**
- * Resolves full TVDB metadata (poster, director, creator/showrunner, genres, overview, year)
- * for a list of media items.
+ * Fetches normalized extended metadata for a single title.
+ */
+export const fetchMediaDetails = async (media: Media): Promise<MediaDetail> => {
+  const res = await fetch(getApiUrl(`/api/v1/media/${media.type}/${numericId(media)}`));
+  return readJSON<MediaDetail>(res);
+};
+
+/**
+ * Resolves metadata for a list of media items in a single backend request.
+ * The normalized result is merged into each local item so user-owned fields
+ * (watched date, personal rating) are preserved.
  */
 export const resolveMediaItems = async (items: Media[]): Promise<Media[]> => {
-  return Promise.all(items.map(async (item) => {
-    const numericId = item.id.includes('-') ? item.id.split('-')[1] : item.id;
-    const endpoint = item.type === 'tv'
-      ? getApiUrl(`/api/tvdb/series/${numericId}/extended`)
-      : getApiUrl(`/api/tvdb/movies/${numericId}/extended`);
+  if (items.length === 0) return items;
 
-    try {
-      let res = await fetch(endpoint);
-      if (!res.ok && endpoint.endsWith('/extended')) {
-        const stdEndpoint = item.type === 'tv'
-          ? getApiUrl(`/api/tvdb/series/${numericId}`)
-          : getApiUrl(`/api/tvdb/movies/${numericId}`);
-        res = await fetch(stdEndpoint);
-      }
-      if (!res.ok) throw new Error();
-      const json = await res.json();
-      const data = json.data;
-      if (data) {
-        const directorName = item.type === 'movie'
-          ? (data.director || data.characters?.find((c: any) => c.peopleType === 'Director')?.personName || undefined)
-          : undefined;
+  const fallback = () =>
+    items.map((item) => ({
+      ...item,
+      title: item.title === 'Loading from the TVDB...' ? 'Unknown Title' : item.title,
+    }));
 
-        const networkName = item.type === 'tv'
-          ? (data.network || data.originalNetwork?.name || (Array.isArray(data.companies?.network) ? data.companies.network[0]?.name : undefined) || undefined)
-          : undefined;
+  try {
+    const res = await fetch(getApiUrl('/api/v1/media/batch'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: items.map((item) => ({ id: item.id, type: item.type })) }),
+    });
+    const json = await readJSON<{ results?: Media[] }>(res);
+    const resolved = new Map((json.results ?? []).map((media) => [media.id, media]));
 
-        let showrunnerName: string | undefined = undefined;
-        if (item.type === 'tv') {
-          showrunnerName = await fetchTVShowrunner(numericId);
-        }
-
-        const posterUrl = data.image || data.image_url || data.thumbnail || '';
-
+    return items.map((item) => {
+      const meta = resolved.get(item.id);
+      if (!meta) {
         return {
           ...item,
-          title: item.title === 'Loading from the TVDB...' ? (data.name || data.translations?.eng || 'Unknown Title') : item.title,
-          year: item.year && item.year !== 'N/A' ? item.year : (data.year || (data.first_air_time ? data.first_air_time.split('-')[0] : (data.firstAired ? data.firstAired.split('-')[0] : 'N/A'))),
-          poster: posterUrl || item.poster || '',
-          genres: data.genres ? (Array.isArray(data.genres) ? data.genres.map((g: any) => typeof g === 'string' ? g : (g?.name || '')).filter(Boolean) : []) : (item.genres || []),
-          slug: data.slug || item.slug || undefined,
-          overview: data.overview || item.overview || undefined,
-          director: directorName || item.director,
-          creator: showrunnerName || networkName || item.creator
+          title: item.title === 'Loading from the TVDB...' ? 'Unknown Title' : item.title,
         };
       }
-    } catch (e) {
-      console.error("Error resolving metadata for item", item.id, e);
-    }
-    return { ...item, title: item.title === 'Loading from the TVDB...' ? 'Unknown Title' : item.title };
-  }));
+      return {
+        ...item,
+        ...meta,
+        title: item.title === 'Loading from the TVDB...' ? (meta.title || 'Unknown Title') : item.title,
+        year: item.year && item.year !== 'N/A' ? item.year : meta.year,
+        poster: meta.poster || item.poster,
+        genres: meta.genres?.length ? meta.genres : item.genres,
+        director: meta.director || item.director,
+        creator: meta.creator || item.creator,
+        overview: meta.overview || item.overview,
+      };
+    });
+  } catch (err) {
+    console.error('Error resolving media metadata', err);
+    return fallback();
+  }
 };
-
-

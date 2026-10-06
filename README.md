@@ -16,7 +16,7 @@ A modern, decentralized movie & TV show tracking application built on **Nostr** 
   - **To Watch**: Keep track of movies and series you plan to watch.
   - **Watched Logs**: Log watched dates, personal ratings, and notes.
 - **Social Discovery**: Follow contacts and inspect their public watchlists.
-- **Decoupled Architecture**: Clean separation between static React frontend and standalone Node.js TVDB API proxy server.
+- **Decoupled Architecture**: Static React frontend backed by a standalone Go metadata service (`backend/`) exposing a normalized `/api/v1` contract.
 
 ---
 
@@ -24,7 +24,7 @@ A modern, decentralized movie & TV show tracking application built on **Nostr** 
 
 - **Frontend**: React 19, TypeScript, Vite, Lucide React
 - **Nostr**: `nostr-tools`, NIP-07, NIP-46
-- **Backend API Proxy**: Node.js 20 (native `http` & `fetch`)
+- **Backend API**: Go 1.26 (`net/http`, zero external dependencies)
 - **Deployment**: Docker, Caddy
 
 ---
@@ -33,6 +33,7 @@ A modern, decentralized movie & TV show tracking application built on **Nostr** 
 
 ### 1. Prerequisites
 - **Node.js**: v20.19+ or v22.12+ (required by Vite 8)
+- **Go**: 1.26+ (backend metadata API)
 - **TheTVDB API Key**: Free key from [TheTVDB API](https://thetvdb.com/api-information)
 
 ### 2. Environment Setup
@@ -81,7 +82,7 @@ This generates optimized static files in the `dist/` directory.
 Run the backend API proxy server container using Docker Compose:
 
 ```bash
-docker compose up -d
+docker compose -f backend/docker-compose.yml up -d
 ```
 
 ### 3. Serve via Caddy

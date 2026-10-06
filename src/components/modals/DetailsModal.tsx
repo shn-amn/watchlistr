@@ -55,16 +55,16 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
         ) : modal.extendedInfo ? (
           (() => {
             const info = modal.extendedInfo;
-            const overviewText = info.overview || item.overview || 'No description available on TheTVDB.';
-            const statusStr = info.status?.name || info.status || 'N/A';
-            const firstAiredStr = info.firstAired || info.releaseDate || item.year || 'N/A';
-            const runtimeStr = info.averageRuntime ? `${info.averageRuntime} mins` : (info.runtime ? `${info.runtime} mins` : 'N/A');
+            const overviewText = info.overview || item.overview || 'No description available.';
+            const statusStr = info.status || 'N/A';
+            const firstAiredStr = info.firstAired || item.year || 'N/A';
+            const runtimeStr = info.runtime ? `${info.runtime} mins` : 'N/A';
 
             let networkStudio = 'N/A';
-            if (item.type === 'tv' && info.networks && info.networks.length > 0) {
-              networkStudio = info.networks[0].name;
-            } else if (item.type === 'movie' && info.studios && info.studios.length > 0) {
-              networkStudio = info.studios[0].name;
+            if (item.type === 'tv' && info.network) {
+              networkStudio = info.network;
+            } else if (item.type === 'movie' && info.studio) {
+              networkStudio = info.studio;
             } else if (item.creator) {
               networkStudio = item.creator;
             }
@@ -82,7 +82,7 @@ export const DetailsModal: React.FC<DetailsModalProps> = ({
                 </div>
 
                 <div className="details-info-col">
-                  <h2 className="details-title">{info.name || item.title}</h2>
+                  <h2 className="details-title">{info.title || item.title}</h2>
 
                   <div style={{ marginBottom: '0.75rem' }}>
                     {item.genres && item.genres.length > 0 && (
