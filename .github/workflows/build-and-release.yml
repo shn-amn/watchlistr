@@ -26,6 +26,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -36,7 +37,7 @@ jobs:
       - name: Build frontend
         run: |
           if [ "${{ github.ref }}" = "refs/heads/next" ]; then
-            npm run build -- --base=/watch/
+            npm --workspace webapp run build -- --base=/watch/
           else
             npm run build
           fi
@@ -47,7 +48,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: watchlistr-dist
-          path: dist/
+          path: webapp/dist/
           retention-days: 7
 
   release:

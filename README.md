@@ -85,7 +85,7 @@ Compile the React frontend into static production files:
 ```bash
 npm run build
 ```
-This generates optimized static files in the `dist/` directory.
+This generates optimized static files in the `webapp/dist/` directory.
 
 ### 2. Run Backend Container
 Run the backend API proxy server container using Docker Compose:
@@ -95,7 +95,7 @@ docker compose -f backend/docker-compose.yml up -d
 ```
 
 ### 3. Serve via Caddy
-Mount `dist/` into your Caddy server and use the following reverse proxy block:
+Mount `webapp/dist/` into your Caddy server and use the following reverse proxy block:
 
 ```caddy
 watchlistr.example.com {

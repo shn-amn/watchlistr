@@ -243,7 +243,7 @@ npm run dev:all
 
 ### Production Deployment
 ```bash
-# 1. Build static frontend
+# 1. Build static frontend (output in webapp/dist/)
 npm run build
 
 # 2. Run backend container

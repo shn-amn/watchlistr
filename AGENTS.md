@@ -12,16 +12,20 @@ Watchlistr is a decentralized media tracking application built on the Nostr prot
 - **TVDB API**: Rich media metadata integration
 - **Social Features**: Follow users and discover their lists
 
+### Repository Layout
+- `webapp/` - React frontend (npm workspace, Vite)
+- `backend/` - Go metadata API (independent module)
+
 ### Key Files to Understand
-- `src/App.tsx` - Main application component
-- `src/nostr.ts` - Nostr protocol implementation
-- `src/hooks/useMediaLists.tsx` - Core list management
-- `src/hooks/useNostrAuth.ts` - Authentication system
+- `webapp/src/App.tsx` - Main application component
+- `webapp/src/nostr/index.ts` - Nostr protocol implementation
+- `webapp/src/hooks/useMediaLists.tsx` - Core list management
+- `webapp/src/hooks/useNostrAuth.ts` - Authentication system
 - `backend/main.go` - Go metadata API entrypoint
 - `backend/internal/api/handlers.go` - `/api/v1` routes and normalization
 - `backend/internal/tvdb/client.go` - TVDB v4 client with token refresh
 - `backend/openapi.yaml` - `/api/v1` contract (source of truth)
-- `src/types/index.ts` - TypeScript interfaces
+- `webapp/src/types/index.ts` - TypeScript interfaces
 
 ### Data Structures (Key Interfaces)
 ```typescript
@@ -79,7 +83,7 @@ The backend reads environment variables only (no `.env` parsing). For local
 development, put them in a `.env` at the repo root — `npm start` sources it:
 ```env
 TTVDB_API_KEY=your_tvdb_api_key_here
-PORT=3000 (optional)
+# PORT=3000 (optional)
 ```
 
 ### Common Patterns

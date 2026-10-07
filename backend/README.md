@@ -19,8 +19,7 @@ npm start                # go -C backend run .
 cd backend && go run .
 ```
 
-Environment variables (read from the process or a `.env` in the working
-directory / its parent):
+Environment variables (read from the process environment):
 
 | Variable        | Default                    | Notes                       |
 | --------------- | -------------------------- | --------------------------- |
