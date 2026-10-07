@@ -230,21 +230,21 @@ interface NostrUser {
 
 ### Development Setup
 ```bash
-# 1. Install dependencies
-npm install
+# 1. Trust the mise config (once per clone)
+mise trust
 
-# 2. Set up environment
-cp .env.example .env
-# Edit .env with TVDB_API_KEY
+# 2. Install toolchain + webapp dependencies (creates .env from the example)
+mise run setup
+# Then edit .env and set TTVDB_API_KEY
 
 # 3. Run development servers
-npm run dev:all
+mise run dev
 ```
 
 ### Production Deployment
 ```bash
 # 1. Build static frontend (output in webapp/dist/)
-npm run build
+mise run build
 
 # 2. Run backend container
 docker compose -f backend/docker-compose.yml up -d

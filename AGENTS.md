@@ -13,8 +13,12 @@ Watchlistr is a decentralized media tracking application built on the Nostr prot
 - **Social Features**: Follow users and discover their lists
 
 ### Repository Layout
-- `webapp/` - React frontend (npm workspace, Vite)
-- `backend/` - Go metadata API (independent module)
+- `webapp/` - React frontend (standalone npm project, Vite)
+- `backend/` - Go metadata API (independent Go module)
+- `mise.toml` - Toolchain pins (Go, Node, gopls) and local dev tasks
+
+There is no npm project at the repository root. `webapp/package.json` is the
+only npm manifest and `webapp/package-lock.json` the only lockfile.
 
 ### Key Files to Understand
 - `webapp/src/App.tsx` - Main application component
@@ -72,15 +76,25 @@ The frontend must target `/api/v1`, never TVDB directly. Update
 
 ### Development Commands
 ```bash
-npm install          # Install dependencies
-npm run dev:all      # Start both frontend and backend
-npm run build        # Build for production
-npm start            # Start backend only
+mise trust           # Once per clone — mise does not trust config files on sight
+mise run setup       # Install toolchain + webapp dependencies
+mise run dev         # Start backend and webapp together
+mise run build       # Build both components
+mise run lint        # Lint both components
+mise run test        # Run the backend tests
+mise run check       # Everything CI runs: lint + test + build
 ```
+
+Component tasks mirror the CI jobs: each of `dev`, `build` and `lint` has a
+`-backend` and a `-webapp` variant (e.g. `build-backend`). `mise run test` is
+backend-only because the webapp has no test runner.
+
+Run `mise tasks ls` for the full list. CI invokes the npm scripts in `webapp/`
+and the Go commands in `backend/` directly — the mise tasks are local wrappers.
 
 ### Environment Setup
 The backend reads environment variables only (no `.env` parsing). For local
-development, put them in a `.env` at the repo root — `npm start` sources it:
+development, put them in a `.env` at the repo root — `mise run dev` sources it:
 ```env
 TTVDB_API_KEY=your_tvdb_api_key_here
 # PORT=3000 (optional)

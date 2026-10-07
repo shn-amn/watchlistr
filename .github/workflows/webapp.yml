@@ -31,8 +31,6 @@ jobs:
           filters: |
             webapp:
               - 'webapp/**'
-              - 'package.json'
-              - 'package-lock.json'
               - 'mise.toml'
               - '.github/workflows/**'
 
@@ -53,18 +51,21 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: webapp/package-lock.json
 
       - name: Install dependencies
+        working-directory: webapp
         run: npm ci
 
       - name: Run linter
+        working-directory: webapp
         run: npm run lint
 
       - name: Build frontend
+        working-directory: webapp
         run: |
           if [ "${{ github.ref }}" = "refs/heads/next" ]; then
-            npm --workspace webapp run build -- --base=/watch/
+            npm run build -- --base=/watch/
           else
             npm run build
           fi

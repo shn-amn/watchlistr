@@ -13,7 +13,7 @@ change without touching the UI.
 
 ```bash
 # from the repository root
-npm start                # go -C backend run .
+mise run dev-backend    # sources the root .env, then go -C backend run .
 
 # or directly
 cd backend && go run .
@@ -31,7 +31,7 @@ Environment variables (read from the process environment):
 
 The service reads these from the process environment only; it does not read
 `.env` files. Provide them via Docker (`env_file`), your orchestrator, or your
-shell. `npm start` at the repo root sources the root `.env` for local
+shell. The `dev-backend` mise task sources the root `.env` for local
 development.
 
 ## Endpoints

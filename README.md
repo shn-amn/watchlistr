@@ -32,25 +32,30 @@ A modern, decentralized movie & TV show tracking application built on **Nostr** 
 ## Local Development
 
 ### 1. Prerequisites
-- **Node.js**: v20.19+ or v22.12+ (required by Vite 8)
-- **Go**: 1.26+ (backend metadata API)
+- **[mise](https://mise.jdx.dev)**: installs and pins the toolchain (Go, Node, gopls)
 - **TheTVDB API Key**: Free key from [TheTVDB API](https://thetvdb.com/api-information)
 
-### 2. Environment Setup
-Copy the example environment file and add your TVDB API key:
+### 2. Install the Toolchain and Dependencies
+`mise.toml` pins Go, Node and gopls, so a clean checkout needs only:
 
 ```bash
-cp .env.example .env
+mise trust          # once per clone — mise does not trust config files on sight
+mise run setup
 ```
 
-Edit `.env`:
+`mise run setup` installs the pinned toolchain, runs `npm ci` in `webapp/`, and
+creates `.env` from `.env.example` if it does not exist.
+
+### 3. Environment Setup
+Add your TVDB API key to `.env` at the repo root:
+
 ```env
 TTVDB_API_KEY=your_tvdb_api_key_here
 # PORT=3000 (Optional, defaults to 3000)
 ```
 
 The backend reads plain environment variables only — it never parses `.env`
-itself. The `npm start` script sources the file for you, so this works for local
+itself. The `dev-backend` task sources the file for you, so this works for local
 development with no extra steps. When running the binary directly, export the
 variables yourself:
 
@@ -58,16 +63,11 @@ variables yourself:
 TTVDB_API_KEY=your_tvdb_api_key_here go -C backend run .
 ```
 
-### 3. Install Dependencies
-```bash
-npm install
-```
-
 ### 4. Run Development Servers
-Start both the TVDB API backend server and Vite frontend concurrently:
+Start both the TVDB API backend server and Vite frontend:
 
 ```bash
-npm run dev:all
+mise run dev
 ```
 
 - **Frontend**: `https://localhost:5173`
@@ -83,7 +83,7 @@ Watchlistr uses a high-performance decoupled deployment architecture:
 Compile the React frontend into static production files:
 
 ```bash
-npm run build
+mise run build
 ```
 This generates optimized static files in the `webapp/dist/` directory.
 

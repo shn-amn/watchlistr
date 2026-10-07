@@ -1,3 +1,84 @@
 [tools]
 go = "1.26.2"
+node = "20"
 "go:golang.org/x/tools/gopls" = "0.21.1"
+
+# ---------------------------------------------------------------- tasks
+# The webapp is the only npm project; its dependency tree lives in
+# webapp/node_modules and is pinned by webapp/package-lock.json.
+# CI runs the npm scripts directly in webapp/ — these tasks are local
+# convenience wrappers so `mise run <task>` works from the repo root.
+
+[tasks.setup]
+description = "Install the toolchain, webapp dependencies, and .env"
+depends = ["setup-tools", "setup-deps", "setup-env"]
+
+[tasks.setup-tools]
+description = "Install the pinned toolchain (go, node, gopls)"
+run = "mise install"
+
+[tasks.setup-deps]
+description = "Install webapp dependencies from the lockfile"
+dir = "webapp"
+run = "npm ci"
+
+[tasks.setup-env]
+description = "Create .env from .env.example if it does not exist"
+run = '''
+if [ ! -f .env ]; then
+  cp .env.example .env
+  echo "Created .env — set TTVDB_API_KEY in it before running 'mise run dev'"
+fi
+'''
+
+[tasks.dev]
+description = "Run the Go API and the Vite dev server together"
+depends = ["dev-backend", "dev-webapp"]
+
+[tasks.dev-backend]
+description = "Run the Go metadata API (reads TTVDB_API_KEY from .env)"
+run = "set -a; [ -f .env ] && . ./.env; set +a; go -C backend run ."
+
+[tasks.dev-webapp]
+description = "Run the Vite dev server on https://localhost:5173"
+dir = "webapp"
+run = "npm run dev"
+
+[tasks.build]
+description = "Build the backend and the webapp"
+depends = ["build-backend", "build-webapp"]
+
+[tasks.build-backend]
+description = "Compile the Go metadata API"
+run = "go -C backend build ./..."
+
+[tasks.build-webapp]
+description = "Build the webapp for production (output in webapp/dist/)"
+dir = "webapp"
+run = "npm run build"
+
+[tasks.lint]
+description = "Lint the backend and the webapp"
+depends = ["lint-backend", "lint-webapp"]
+
+[tasks.lint-backend]
+description = "Vet the Go metadata API"
+run = "go -C backend vet ./..."
+
+[tasks.lint-webapp]
+description = "Lint the webapp"
+dir = "webapp"
+run = "npm run lint"
+
+[tasks.test]
+description = "Run the backend tests (the webapp has no test runner)"
+run = "go -C backend test ./..."
+
+[tasks.check]
+description = "Run everything CI runs: lint, test and build for both components"
+depends = ["lint", "test", "build"]
+
+[tasks.preview]
+description = "Serve the production webapp build locally"
+dir = "webapp"
+run = "npm run preview"
