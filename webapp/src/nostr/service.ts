@@ -173,7 +173,7 @@ export class NostrService {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify(['CLOSE', subId]));
             }
-          } catch (e) { }
+          } catch { }
           cleanup();
           resolve();
         }, timeoutMs);

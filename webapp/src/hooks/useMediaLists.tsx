@@ -56,7 +56,7 @@ export function useMediaLists({
     try {
       const saved = localStorage.getItem('watchlistr_deleted_lists');
       return saved ? JSON.parse(saved) : {};
-    } catch (e) {
+    } catch {
       return {};
     }
   });
@@ -69,7 +69,7 @@ export function useMediaLists({
     if (savedDeleted) {
       try {
         localDeleted = JSON.parse(savedDeleted);
-      } catch (e) {}
+      } catch {}
     }
 
     if (savedLists) {
@@ -81,7 +81,7 @@ export function useMediaLists({
             ...l,
             title: cleanListTitle(l.title)
           }));
-      } catch (e) { }
+      } catch { }
     }
 
     const savedWatchlist = localStorage.getItem('watchlistr_watchlist');
@@ -214,6 +214,8 @@ export function useMediaLists({
 
   // Auto-resolve metadata on mount for any items in local storage missing details
   useEffect(() => {
+    // Mount-only by design: depending on `lists` would re-resolve metadata
+    // (one backend batch call per list) on every list change.
     lists.forEach(list => {
       if (list.items.some(x => x.title === 'Loading from the TVDB...' || !x.poster || (x.type === 'movie' && !x.director) || (x.type === 'tv' && !x.creator))) {
         resolveUserListMetadata(list.id, list.items);
@@ -422,7 +424,7 @@ export function useMediaLists({
               name: meta.display_name || meta.name || meta.username,
               picture: meta.picture
             });
-          } catch (e) { }
+          } catch { }
         }
       }
 
@@ -658,7 +660,7 @@ export function useMediaLists({
             };
             const signedTombstone = await activeSignerRef.current.signEvent(unsignedTombstone);
             await nostrServiceRef.current.publishEvent(signedTombstone);
-          } catch (e) {}
+          } catch {}
 
           removeAction?.(item.id);
         }
@@ -718,7 +720,7 @@ export function useMediaLists({
       const updated = { ...prev, [targetId]: now };
       try {
         localStorage.setItem('watchlistr_deleted_lists', JSON.stringify(updated));
-      } catch (e) {}
+      } catch {}
       return updated;
     });
 

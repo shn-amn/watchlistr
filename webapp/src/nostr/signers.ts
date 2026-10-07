@@ -2,7 +2,7 @@ import { BunkerSigner } from 'nostr-tools/nip46';
 import type { NostrEvent, NostrSigner } from './types';
 
 export class Nip07Signer implements NostrSigner {
-  type: 'extension' = 'extension';
+  type = 'extension' as const;
 
   async getPublicKey(): Promise<string> {
     if (!window.nostr) throw new Error("No NIP-07 extension found.");
@@ -16,7 +16,7 @@ export class Nip07Signer implements NostrSigner {
 }
 
 export class ReadOnlySigner implements NostrSigner {
-  type: 'readonly' = 'readonly';
+  type = 'readonly' as const;
   private pubkey: string;
 
   constructor(pubkey: string) {
@@ -40,7 +40,7 @@ export class BunkerTimeoutError extends Error {
 }
 
 export class BunkerNip46Signer implements NostrSigner {
-  type: 'bunker' = 'bunker';
+  type = 'bunker' as const;
   private bunkerSigner: BunkerSigner;
   public clientSecretKeyHex: string;
   public bunkerUrl: string;
@@ -74,6 +74,6 @@ export class BunkerNip46Signer implements NostrSigner {
   async close(): Promise<void> {
     try {
       await this.bunkerSigner.close();
-    } catch (e) { }
+    } catch { }
   }
 }

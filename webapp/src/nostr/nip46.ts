@@ -37,12 +37,12 @@ export async function parseAnyBunkerInput(input: string): Promise<{ pubkey: stri
         const secret = url.searchParams.get('secret');
         return { pubkey, relays, secret };
       }
-    } catch (e) { }
+    } catch { }
   }
 
   try {
     return await parseBunkerInput(cleaned);
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -194,7 +194,7 @@ export function startNostrConnectSession(
       const timeoutId = setTimeout(() => {
         if (!isSettled) {
           isSettled = true;
-          try { sub.close(); } catch (_e) { }
+          try { sub.close(); } catch { }
           reject(new Error("Nostr Connect session timed out after 2 minutes. Please check your signer app."));
         }
       }, 120000);
@@ -216,13 +216,13 @@ export function startNostrConnectSession(
               try {
                 const decrypted04 = nip04.decrypt(clientSecretKey, event.pubkey, event.content);
                 response = JSON.parse(decrypted04);
-              } catch (_e) {
+              } catch {
                 // 2. Try NIP-44 decryption fallback (used by Amber and newer NIP-46 signers)
                 try {
                   const convKey = nip44.getConversationKey(clientSecretKey, event.pubkey);
                   const decrypted44 = nip44.decrypt(event.content, convKey);
                   response = JSON.parse(decrypted44);
-                } catch (_err) { }
+                } catch { }
               }
 
               if (!response) return;
@@ -246,7 +246,7 @@ export function startNostrConnectSession(
               if (isMatch) {
                 isSettled = true;
                 clearTimeout(timeoutId);
-                try { sub.close(); } catch (_e) { }
+                try { sub.close(); } catch { }
 
                 signer.bp = {
                   pubkey: event.pubkey,
@@ -256,7 +256,7 @@ export function startNostrConnectSession(
 
                 try {
                   signer.conversationKey = nip44.getConversationKey(clientSecretKey, event.pubkey);
-                } catch (_e) { }
+                } catch { }
 
                 signer.setupSubscription();
 

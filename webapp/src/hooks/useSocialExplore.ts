@@ -166,7 +166,7 @@ export function useSocialExplore({
                 picture: meta.picture
               }
             }));
-          } catch (e) { }
+          } catch { }
         }
       }
     });
@@ -353,7 +353,7 @@ export function useSocialExplore({
                 picture: meta.picture
               }
             }));
-          } catch (e) { }
+          } catch { }
         }
       });
 
@@ -407,6 +407,10 @@ export function useSocialExplore({
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMoreExplore && !isExploreLoading && !isExploreLoadingMore) {
+          // loadExploreData is recreated every render. The deps above already
+          // cover every value that gates whether another page loads, so
+          // depending on it would only rebuild this observer on renders that
+          // cannot change the outcome.
           loadExploreData(false);
         }
       },
@@ -440,6 +444,10 @@ export function useSocialExplore({
     const urlsAtLoad = connectedRelayUrls.slice();
     if (followedLoadTimerRef.current) clearTimeout(followedLoadTimerRef.current);
     followedLoadTimerRef.current = setTimeout(() => {
+      // connectedRelayKey and followedPubkeys.length are deliberate scalar
+      // stand-ins for array identities; depending on the arrays themselves
+      // would reset this 800ms debounce every render and the load would never
+      // fire.
       loadFollowedData(followedPubkeys, urlsAtLoad);
     }, 800);
     return () => {
@@ -463,6 +471,7 @@ export function useSocialExplore({
     exploreLoadTimerRef.current = setTimeout(() => {
       const stillUnqueried = connectedRelayUrls.some((url) => !exploreQueriedRelayUrlsRef.current.has(url));
       if (!stillUnqueried) return;
+      // Same deliberate scalar-signature deps as the followed-list effect above.
       loadExploreData(true, undefined, undefined, urlsAtLoad);
     }, 800);
     return () => {

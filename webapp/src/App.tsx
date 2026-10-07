@@ -105,6 +105,9 @@ function App() {
   // Re-sync user lists and profile when pubkey / signer updates
   useEffect(() => {
     if (auth.nostrUser?.pubkey) {
+      // useMediaLists returns a fresh object — and a fresh syncFromNostr — on
+      // every render, so depending on it would re-sync from Nostr every render.
+      // (oxlint 1.74 ignores inline disables, so this stays a warning.)
       lists.syncFromNostr(auth.nostrUser.pubkey);
     }
   }, [auth.nostrUser?.pubkey, auth.nostrUser?.signerType]);

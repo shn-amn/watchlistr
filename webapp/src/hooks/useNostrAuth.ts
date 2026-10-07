@@ -157,7 +157,7 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
       if (activeSignerRef.current && 'close' in activeSignerRef.current) {
         try {
           await (activeSignerRef.current as BunkerNip46Signer).close();
-        } catch (e) {}
+        } catch {}
       }
       const signer = await createBunkerSigner(nostrUser.bunkerUrl, nostrUser.bunkerClientSk);
       const pk = await signer.getPublicKey();
@@ -418,7 +418,7 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
     if (activeSignerRef.current && 'close' in activeSignerRef.current) {
       try {
         (activeSignerRef.current as BunkerNip46Signer).close();
-      } catch (e) { }
+      } catch { }
     }
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
@@ -528,7 +528,7 @@ export function useNostrAuth({ onLoginSuccess, onLogout }: UseNostrAuthProps = {
       if (existingProfileEvent?.content) {
         try {
           existingMeta = JSON.parse(existingProfileEvent.content);
-        } catch (err) { }
+        } catch { }
       }
 
       const updatedMeta = {
