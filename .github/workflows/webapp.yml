@@ -1,4 +1,4 @@
-name: Build & Release
+name: Webapp
 
 on:
   push:
@@ -11,8 +11,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  frontend:
-    name: Frontend build
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      webapp: ${{ steps.filter.outputs.webapp }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            webapp:
+              - 'webapp/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'mise.toml'
+              - '.github/workflows/**'
+
+  build:
+    name: Build
+    needs: changes
+    if: needs.changes.outputs.webapp == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -52,10 +79,10 @@ jobs:
           retention-days: 7
 
   release:
-    name: Frontend release
-    needs: frontend
+    name: Release
+    needs: [ changes, build ]
+    if: needs.changes.outputs.webapp == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
     permissions:
       contents: write
 
@@ -97,79 +124,3 @@ jobs:
           make_latest: ${{ steps.params.outputs.make_latest }}
           prerelease: ${{ steps.params.outputs.prerelease == 'true' }}
           files: watchlistr-dist.zip
-
-  docker:
-    name: Backend image build and publish
-    needs: backend
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set lowercased image name
-        run: |
-          echo "IMAGE_NAME=ghcr.io/${OWNER,,}/ttvdb-proxy" >> $GITHUB_ENV
-        env:
-          OWNER: '${{ github.repository_owner }}'
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=nightly,enable=${{ github.ref == 'refs/heads/next' }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./backend
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  backend:
-    name: Backend check
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          cache: false
-
-      - name: Vet
-        working-directory: backend
-        run: go vet ./...
-
-      - name: Test
-        working-directory: backend
-        run: go test ./...
-
-      - name: Build
-        working-directory: backend
-        run: go build ./...
