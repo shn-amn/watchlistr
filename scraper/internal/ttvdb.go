@@ -20,7 +20,6 @@ type TTVDB struct {
 	http      *http.Client
 	token     string
 	mu        sync.Mutex
-	refreshMu sync.Mutex
 }
 
 func NewTTVDB(apiKey string) *TTVDB {

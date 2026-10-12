@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/shn-amn/watchlistr/scraper/internal"
 )
@@ -13,9 +12,9 @@ func main() {
 	ttvdb := internal.NewTTVDB(apiKey)
 	scraper := internal.NewScraper(ttvdb)
 
-	now := time.Now()
-	fmt.Printf("starting at %s\n", now.UTC().Format(time.RFC3339))
-	scraper.Run(8, 3)
-	now = time.Now()
-	fmt.Printf("finished at %s\n", now.UTC().Format(time.RFC3339))
+	if err := scraper.Run(8, 3); err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	os.Exit(0)
 }

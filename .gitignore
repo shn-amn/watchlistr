@@ -13,6 +13,8 @@ dist-ssr
 *.local
 
 tmp/
+scraper/scraper
+backend/backend
 
 # Editor directories and files
 .vscode/*

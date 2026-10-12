@@ -31,6 +31,11 @@ if [ ! -f .env ]; then
 fi
 '''
 
+[tasks.scrape]
+description = "Run the Go Scrpaer and save the results in 'scraper/tmp'"
+dir = "scraper"
+run = "set -a; [ -f ../.env ] && . ../.env; set +a; go run ."
+
 [tasks.dev]
 description = "Run the Go API and the Vite dev server together"
 depends = ["dev-backend", "dev-webapp"]
@@ -45,8 +50,12 @@ dir = "webapp"
 run = "npm run dev"
 
 [tasks.build]
-description = "Build the backend and the webapp"
-depends = ["build-backend", "build-webapp"]
+description = "Build the scraper, the backend and the webapp"
+depends = ["build-scraper", "build-backend", "build-webapp"]
+
+[tasks.build-scraper]
+description = "Compile the Go scraper"
+run = "go -C scraper build ./..."
 
 [tasks.build-backend]
 description = "Compile the Go metadata API"
@@ -58,8 +67,12 @@ dir = "webapp"
 run = "npm run build"
 
 [tasks.lint]
-description = "Lint the backend and the webapp"
-depends = ["lint-backend", "lint-webapp"]
+description = "Lint the scraper, the backend and the webapp"
+depends = ["lint-scraper", "lint-backend", "lint-webapp"]
+
+[tasks.lint-scraper]
+description = "Vet the Go scraper"
+run = "go -C scraper vet ./..."
 
 [tasks.lint-backend]
 description = "Vet the Go metadata API"

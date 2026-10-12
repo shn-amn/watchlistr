@@ -1,8 +1,8 @@
 package internal
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 )
 
 type HTTPError struct {
@@ -15,7 +15,7 @@ func (e *HTTPError) Error() string {
 }
 
 type Page struct {
-	Data   []json.RawMessage `json:"data"`
+	Data []json.RawMessage `json:"data"`
 }
 
 type Kind string
@@ -28,4 +28,34 @@ const (
 type Doc struct {
 	Kind Kind
 	Raw  *json.RawMessage
+}
+
+type PageErr struct {
+	Kind       Kind
+	Page       int
+	Underlying error
+}
+
+func (e PageErr) Error() string {
+	return fmt.Sprintf("error fetching page %s#%d; %s", e.Kind, e.Page, e.Underlying.Error())
+}
+
+type DocErr struct {
+	Kind       Kind
+	ID         int
+	Underlying error
+}
+
+func (e DocErr) Error() string {
+	return fmt.Sprintf("error decoding doc %s:%d; %s", e.Kind, e.ID, e.Underlying.Error())
+}
+
+type WriteErr struct {
+	Kind       Kind
+	ID         int
+	Underlying error
+}
+
+func (e WriteErr) Error() string {
+	return fmt.Sprintf("error writing file %s/%d; %s", e.Kind, e.ID, e.Underlying.Error())
 }
